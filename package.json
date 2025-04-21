@@ -1,0 +1,19 @@
+{
+    "name": "zkuni",
+    "version": "1.0.0",
+    "description": "ZK UNI - Privacy-preserving College Application",
+    "author": "Kaleab",
+    "license": "MIT",
+    "main": "index.js",
+    "scripts": {
+        "dev": "vite",
+        "build": "vite build"
+    },
+    "dependencies": {
+        "@aztec/bb.js": "0.72.1",
+        "@noir-lang/noir_js": "1.0.0-beta.3"
+    },
+    "devDependencies": {
+        "vite": "^6.2.2"
+    }
+}
