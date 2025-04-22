@@ -2,3 +2,6 @@
 [package]
 name = "circuit"
 type = "bin"
+
+[dependencies]
+noir_elgamal = { tag = "v0", git = "https://github.com/skaunov/elgamal" }

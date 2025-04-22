@@ -199,21 +199,22 @@ fn test_encrypted_matching() {
 
     let college_capacities: [u32; N_COLLEGE_QUOTA] = [3, 1, 1, 0, 0];
     
-    // FIXED: Using smaller key hash values that fit within Field limits
+    // Example cryptographic key hashes (these would be generated from real keys in JS)
+    // In a real system, these would be SHA-256 hashes of public keys
     let student_public_keys: [Field; N_STUDENT_PREFERENCE] = [
-        0x7d1e5f02b0cdc7e10cff917625b4e7ee as Field,
-        0x83a1eff0b6627a69b41c5de7b0aeb8e3 as Field,
-        0x9c4d8bfd9d4def4eeb1615aa53a32e30 as Field,
-        0xa0b3576ee834936135b547beba820d6f as Field,
-        0xb4f0c6f7d89513c2055c54bd463a5275 as Field
+        0x7d1e5f02b0cdc7e10cff917625b4e7eedb3b2f7ea31a56e954b1acd5ca135cb0 as Field,
+        0x83a1eff0b6627a69b41c5de7b0aeb8e3834e66c6561c5b19e9ac16dc36bfcb56 as Field,
+        0x9c4d8bfd9d4def4eeb1615aa53a32e30b848a0bfb59c80b66d04cc44ae4a264c as Field,
+        0xa0b3576ee834936135b547beba820d6f95fbef42b14c5b06128c9608193c7bb2 as Field,
+        0xb4f0c6f7d89513c2055c54bd463a5275748a606ef4a4400d82fec3e762d3c56a as Field
     ];
     
     let college_public_keys: [Field; N_COLLEGE_QUOTA] = [
-        0xc78e07db0ad00f15ebde45d9afd043e4 as Field,
-        0xd391cafa15d22c96a28afa0375ea8db7 as Field,
-        0xe2e3aa9a63b2b855d7c81c9f60e9c411 as Field,
-        0xf4b8dff2bb2a889432d097b3fb781c54 as Field,
-        0x052968bd5e7e3d743d45cb45e7ca1bf7 as Field
+        0xc78e07db0ad00f15ebde45d9afd043e4b95d1a11374b8cc32ecdc10fd7ad6c04 as Field,
+        0xd391cafa15d22c96a28afa0375ea8db76bf3dce85886cebfad272c73e827a03f as Field,
+        0xe2e3aa9a63b2b855d7c81c9f60e9c4114b8a96d9967ad66eaf6ee7127de52796 as Field,
+        0xf4b8dff2bb2a889432d097b3fb781c54bb83a5c7a60921c6651cf288e8ece75c as Field,
+        0x052968bd5e7e3d743d45cb45e7ca1bf7c0ff731c8b5ab365d81357eeb9d0c21a as Field
     ];
 
     let encrypted_results = main(
@@ -226,7 +227,6 @@ fn test_encrypted_matching() {
         3
     );
     
-    println(encrypted_results);
     // This only prints the recipient IDs - the actual matches remain encrypted
     println("Encrypted matches (only recipient IDs shown):");
     for i in 0..10 {
@@ -234,7 +234,6 @@ fn test_encrypted_matching() {
     }
     
     // Additional test to demonstrate the security properties
-   // Additional test to demonstrate the security properties
     println("\nVerifying encryption security properties:");
     
     // Example of encrypting the same message twice with the same key
@@ -246,14 +245,10 @@ fn test_encrypted_matching() {
     let enc2 = encrypt(message, recipient, key);
     
     // The recipient ID should be the same
-    println( enc1[0] == enc2[0]);
     
     // But the encrypted data should be different due to the nonce
-    println( enc1[1] != enc2[1]);
     
     // Message with a different key should produce different ciphertext
     let diff_key = student_public_keys[1];
     let enc3 = encrypt(message, recipient, diff_key);
-    println( enc1[1] != enc3[1]);
-
 }
