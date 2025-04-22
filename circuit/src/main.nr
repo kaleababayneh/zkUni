@@ -1,30 +1,43 @@
+mod elgamal;
+
 global N_STUDENT_PREFERENCE: u32 = 5;
 global N_COLLEGE_QUOTA: u32 = 5;
 global MAX_PREFS: u32 = 5;
 global MAX_COLLEGE_CAPACITY: u32 = 3;   // upper bound for any college quota
 global ENCRYPTED_SIZE: u32 = 4;  // Size of encrypted data structure
 global TOTAL_ENCRYPTIONS: u32 = N_STUDENT_PREFERENCE + (N_COLLEGE_QUOTA * MAX_COLLEGE_CAPACITY); // Max possible number of encryptions
-
 global UNMATCHED: u32 = 999;
+global BITS_DL: u32 = 32; 
 
 use std::hash::hash_to_field;
+use crate::elgamal::{ElGamalCiphered, EmbeddedCurvePoint, EmbeddedCurveScalar, fixed_base_scalar_mul};
 
-// Enhanced encryption function that works with cryptographic key hashes
-fn encrypt(message: u32, recipient_id: u32, public_key_hash: Field) -> [Field; 4] {
-    // Create a unique nonce from the recipient ID
-    let nonce = hash_to_field([recipient_id as Field]);
+// Updated encryption function using secure ElGamal encryption
+fn encrypt_elgamal(
+    message: u32, 
+    public_key: EmbeddedCurvePoint, 
+    encryption_index: u32,  // Unique index for this encryption
+    nonce_seed: Field       // Global seed value for this matching round
+) -> ElGamalCiphered<BITS_DL> {
+    // Generate unique randomness for each encryption operation
+    // By incorporating encryption index and nonce
+    let randomness_seed = hash_to_field([
+        message as Field, 
+        public_key.x, 
+        public_key.y, 
+        encryption_index as Field,
+        nonce_seed
+    ]);
     
-    // Convert message to field
-    let message_field = message as Field;
+    let randomness = EmbeddedCurveScalar::from_field(randomness_seed);
     
-    // Improved encryption using the key hash and nonce together
-    // This simulates ECDH by combining the message with the public key hash and nonce
-    let combined = hash_to_field([message_field, public_key_hash, nonce]);
-    
-    // Create verification field to ensure message integrity
-    let verification = hash_to_field([message_field, nonce, public_key_hash]);
-    
-    [recipient_id as Field, combined, nonce, verification]
+    // Perform ElGamal encryption with unique randomness
+    ElGamalCiphered::<BITS_DL>::new(public_key, message as Field, randomness)
+}
+
+// Function to convert Field to EmbeddedCurvePoint
+fn field_to_curve_point(key: Field) -> EmbeddedCurvePoint {
+    fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(key))
 }
 
 fn stable_matching(
@@ -124,21 +137,45 @@ fn main(
     student_public_keys: [Field; N_STUDENT_PREFERENCE],
     college_public_keys: [Field; N_COLLEGE_QUOTA],
     actual_student_list: u32,
-    actual_uni_list: u32
-) -> pub [[Field; ENCRYPTED_SIZE]; TOTAL_ENCRYPTIONS] {
+    actual_uni_list: u32,
+    nonce_seed: Field  // Add global nonce seed parameter
+) -> pub [ElGamalCiphered<BITS_DL>; TOTAL_ENCRYPTIONS] {
     // 1. Calculate the matching internally - NOT exposed publicly
     let matches = stable_matching(student_prefs, college_prefs, college_capacities, 
                                actual_student_list, actual_uni_list);
     
-    // 2. Encrypt each match for the appropriate recipients
-    let mut encrypted_matches = [[0 as Field; ENCRYPTED_SIZE]; TOTAL_ENCRYPTIONS];
+    // Convert Field keys to EmbeddedCurvePoints for ElGamal
+    let mut student_curve_keys: [EmbeddedCurvePoint; N_STUDENT_PREFERENCE] = 
+        [EmbeddedCurvePoint::point_at_infinity(); N_STUDENT_PREFERENCE];
+    let mut college_curve_keys: [EmbeddedCurvePoint; N_COLLEGE_QUOTA] = 
+        [EmbeddedCurvePoint::point_at_infinity(); N_COLLEGE_QUOTA];
+    
+    for i in 0..N_STUDENT_PREFERENCE {
+        student_curve_keys[i] = field_to_curve_point(student_public_keys[i]);
+    }
+    
+    for i in 0..N_COLLEGE_QUOTA {
+        college_curve_keys[i] = field_to_curve_point(college_public_keys[i]);
+    }
+    
+    // 2. Encrypt each match using ElGamal
+    let mut encrypted_matches = [ElGamalCiphered::<BITS_DL> {
+        c1: EmbeddedCurvePoint::point_at_infinity(),
+        c2: EmbeddedCurvePoint::point_at_infinity()
+    }; TOTAL_ENCRYPTIONS];
+    
     let mut enc_idx = 0;
     
     // Encrypt for students - each student gets their matched college
     for s in 0..N_STUDENT_PREFERENCE {
         if s < actual_student_list {
             let matched_college = matches[s];
-            encrypted_matches[enc_idx] = encrypt(matched_college, s, student_public_keys[s]);
+            encrypted_matches[enc_idx] = encrypt_elgamal(
+                matched_college, 
+                student_curve_keys[s],
+                enc_idx,      // Use unique encryption index
+                nonce_seed    // Use provided nonce seed
+            );
             enc_idx += 1;
         }
     }
@@ -151,7 +188,12 @@ fn main(
             for s in 0..N_STUDENT_PREFERENCE {
                 if s < actual_student_list {
                     if matches[s] == c {
-                        encrypted_matches[enc_idx] = encrypt(s, N_STUDENT_PREFERENCE + c, college_public_keys[c]);
+                        encrypted_matches[enc_idx] = encrypt_elgamal(
+                            s, 
+                            college_curve_keys[c],
+                            enc_idx,      // Use unique encryption index
+                            nonce_seed    // Use provided nonce seed
+                        );
                         enc_idx += 1;
                         count += 1;
                     }
@@ -159,9 +201,14 @@ fn main(
             }
             
             // Pad with dummy entries to hide the number of matches
-            for _ in 0..MAX_COLLEGE_CAPACITY {
+            for pad in 0..MAX_COLLEGE_CAPACITY {
                 if count < college_capacities[c] {
-                    encrypted_matches[enc_idx] = encrypt(UNMATCHED, N_STUDENT_PREFERENCE + c, college_public_keys[c]);
+                    encrypted_matches[enc_idx] = encrypt_elgamal(
+                        UNMATCHED, 
+                        college_curve_keys[c],
+                        enc_idx,      // Use unique encryption index
+                        nonce_seed    // Use provided nonce seed
+                    );
                     enc_idx += 1;
                     count += 1;
                 }
@@ -169,10 +216,13 @@ fn main(
         }
     }
     
-    // Fill remaining slots with dummy data
+    // Fill remaining slots with dummy data if needed
     for i in 0..TOTAL_ENCRYPTIONS {
         if i >= enc_idx {
-            encrypted_matches[i] = [0 as Field, 0 as Field, 0 as Field, 0 as Field];
+            encrypted_matches[i] = ElGamalCiphered::<BITS_DL> {
+                c1: EmbeddedCurvePoint::point_at_infinity(),
+                c2: EmbeddedCurvePoint::point_at_infinity()
+            };
         }
     }
     
@@ -199,7 +249,7 @@ fn test_encrypted_matching() {
 
     let college_capacities: [u32; N_COLLEGE_QUOTA] = [3, 1, 1, 0, 0];
     
-    // FIXED: Using smaller key hash values that fit within Field limits
+    // Using smaller key hash values that fit within Field limits
     let student_public_keys: [Field; N_STUDENT_PREFERENCE] = [
         0x7d1e5f02b0cdc7e10cff917625b4e7ee as Field,
         0x83a1eff0b6627a69b41c5de7b0aeb8e3 as Field,
@@ -215,6 +265,9 @@ fn test_encrypted_matching() {
         0xf4b8dff2bb2a889432d097b3fb781c54 as Field,
         0x052968bd5e7e3d743d45cb45e7ca1bf7 as Field
     ];
+    
+    // Add a nonce seed for testing
+    let nonce_seed = 0x12345678 as Field;
 
     let encrypted_results = main(
         student_prefs, 
@@ -223,37 +276,56 @@ fn test_encrypted_matching() {
         student_public_keys,
         college_public_keys,
         5, 
-        3
+        3,
+        nonce_seed  // Pass the nonce seed
     );
     
-    println(encrypted_results);
-    // This only prints the recipient IDs - the actual matches remain encrypted
-    println("Encrypted matches (only recipient IDs shown):");
-    for i in 0..10 {
-        println(encrypted_results[i][0]); 
-    }
+    // Test verification - examine a few encrypted values
+    println("Encrypted matching test completed");
+    println(TOTAL_ENCRYPTIONS);
     
-    // Additional test to demonstrate the security properties
-   // Additional test to demonstrate the security properties
+    // Verify that we have some non-infinity values
+    let has_real_values = encrypted_results[0].c1 != EmbeddedCurvePoint::point_at_infinity();
+    println(has_real_values);
+    
+    // Verify encryption properties
     println("\nVerifying encryption security properties:");
     
-    // Example of encrypting the same message twice with the same key
-    let message = 42;
-    let recipient = 1;
-    let key = student_public_keys[0];
+    // Test that encrypting the same message twice produces different ciphertexts
+    let test_message = 1;
+    let test_key = field_to_curve_point(student_public_keys[0]);
     
-    let enc1 = encrypt(message, recipient, key);
-    let enc2 = encrypt(message, recipient, key);
+    let cipher1 = encrypt_elgamal(test_message, test_key, 100, nonce_seed);
+    let cipher2 = encrypt_elgamal(test_message, test_key, 101, nonce_seed);
     
-    // The recipient ID should be the same
-    println( enc1[0] == enc2[0]);
-    
-    // But the encrypted data should be different due to the nonce
-    println( enc1[1] != enc2[1]);
-    
-    // Message with a different key should produce different ciphertext
-    let diff_key = student_public_keys[1];
-    let enc3 = encrypt(message, recipient, diff_key);
-    println( enc1[1] != enc3[1]);
+    // They should have different c1 values due to different randomness
+    let different_ciphertexts = (cipher1.c1.x != cipher2.c1.x) | (cipher1.c1.y != cipher2.c1.y);
+    println("Same message, different encryption indices produces different ciphertexts: ");
+    println(different_ciphertexts);
+}
 
+// Optional additional test to verify semantic security
+#[test]
+fn test_semantic_security() {
+    // Setup a test key
+    let key_field = 0x7d1e5f02b0cdc7e10cff917625b4e7ee as Field;
+    let test_key = field_to_curve_point(key_field);
+    let nonce_seed = 0x12345678 as Field;
+    
+    // Test message
+    let message = 5;
+    
+    // Encrypt the same message multiple times with different indices
+    let cipher1 = encrypt_elgamal(message, test_key, 1, nonce_seed);
+    let cipher2 = encrypt_elgamal(message, test_key, 2, nonce_seed);
+    let cipher3 = encrypt_elgamal(message, test_key, 3, nonce_seed);
+    
+    // Verify all ciphertexts are different
+    let all_different = 
+        ((cipher1.c1.x != cipher2.c1.x) | (cipher1.c1.y != cipher2.c1.y)) &
+        ((cipher1.c1.x != cipher3.c1.x) | (cipher1.c1.y != cipher3.c1.y)) &
+        ((cipher2.c1.x != cipher3.c1.x) | (cipher2.c1.y != cipher3.c1.y));
+    
+    println("Semantic security test (all ciphertexts should be different): ");
+    println(all_different);
 }
