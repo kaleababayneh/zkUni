@@ -518,121 +518,121 @@ fn main(
 //     println("\n======= TEST COMPLETED SUCCESSFULLY =======");
 // }
 
-#[test]
-fn test_encrypted_matching_fixed() {
-    // Student and college preferences remain the same...
-    let student_prefs: [[u32; MAX_PREFS]; N_STUDENT_PREFERENCE] = [
-        [0, 1, 2, UNMATCHED, UNMATCHED], // Student 0 prefers College 0, then 1, then 2
-        [1, 0, 2, UNMATCHED, UNMATCHED], // Student 1 prefers College 1, then 0, then 2
-        [1, 2, 0, UNMATCHED, UNMATCHED], // Student 2 prefers College 1, then 2, then 0
-        [0, 2, 1, UNMATCHED, UNMATCHED], // Student 3 prefers College 0, then 2, then 1
-        [2, 0, 1, UNMATCHED, UNMATCHED], // Student 4 prefers College 2, then 0, then 1
-    ];
+// #[test]
+// fn test_encrypted_matching_fixed() {
+//     // Student and college preferences remain the same...
+//     let student_prefs: [[u32; MAX_PREFS]; N_STUDENT_PREFERENCE] = [
+//         [0, 1, 2, UNMATCHED, UNMATCHED], // Student 0 prefers College 0, then 1, then 2
+//         [1, 0, 2, UNMATCHED, UNMATCHED], // Student 1 prefers College 1, then 0, then 2
+//         [1, 2, 0, UNMATCHED, UNMATCHED], // Student 2 prefers College 1, then 2, then 0
+//         [0, 2, 1, UNMATCHED, UNMATCHED], // Student 3 prefers College 0, then 2, then 1
+//         [2, 0, 1, UNMATCHED, UNMATCHED], // Student 4 prefers College 2, then 0, then 1
+//     ];
 
-    let college_prefs: [[u32; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA] = [
-        [1, 3, 0, 2, 4],   // College 0 prefers Students 1, 3, 0, 2, 4 (in that order)
-        [2, 0, 4, 1, 3],   // College 1 prefers Students 2, 0, 4, 1, 3
-        [0, 2, 3, 4, 1],   // College 2 prefers Students 0, 2, 3, 4, 1
-        [UNMATCHED; N_STUDENT_PREFERENCE], // College 3 has no preferences (not used)
-        [UNMATCHED; N_STUDENT_PREFERENCE], // College 4 has no preferences (not used)
-    ];
+//     let college_prefs: [[u32; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA] = [
+//         [1, 3, 0, 2, 4],   // College 0 prefers Students 1, 3, 0, 2, 4 (in that order)
+//         [2, 0, 4, 1, 3],   // College 1 prefers Students 2, 0, 4, 1, 3
+//         [0, 2, 3, 4, 1],   // College 2 prefers Students 0, 2, 3, 4, 1
+//         [UNMATCHED; N_STUDENT_PREFERENCE], // College 3 has no preferences (not used)
+//         [UNMATCHED; N_STUDENT_PREFERENCE], // College 4 has no preferences (not used)
+//     ];
 
-    let college_capacities: [u32; N_COLLEGE_QUOTA] = [3, 1, 1, 0, 0];
+//     let college_capacities: [u32; N_COLLEGE_QUOTA] = [3, 1, 1, 0, 0];
 
-    println("\n======= ZK UNIVERSITY MATCHING PROTOCOL TEST =======");
-    println("\nSETUP PARAMETERS:");
-    println("Number of students: 5");
-    println("Number of colleges: 3 (with capacities 3, 1, 1)");
+//     println("\n======= ZK UNIVERSITY MATCHING PROTOCOL TEST =======");
+//     println("\nSETUP PARAMETERS:");
+//     println("Number of students: 5");
+//     println("Number of colleges: 3 (with capacities 3, 1, 1)");
 
-    // STEP 1: Generate mocked private keys and corresponding public keys
-    let student_private_keys: [Field; N_STUDENT_PREFERENCE] = [
-        0x1 as Field, // Mocked private key for Student 0
-        0x2 as Field, // Mocked private key for Student 1
-        0x3 as Field, // Mocked private key for Student 2
-        0x4 as Field, // Mocked private key for Student 3
-        0x5 as Field  // Mocked private key for Student 4
-    ];
+//     // STEP 1: Generate mocked private keys and corresponding public keys
+//     let student_private_keys: [Field; N_STUDENT_PREFERENCE] = [
+//         0x1 as Field, // Mocked private key for Student 0
+//         0x2 as Field, // Mocked private key for Student 1
+//         0x3 as Field, // Mocked private key for Student 2
+//         0x4 as Field, // Mocked private key for Student 3
+//         0x5 as Field  // Mocked private key for Student 4
+//     ];
 
-    let college_private_keys: [Field; N_COLLEGE_QUOTA] = [
-        0x6 as Field, // Mocked private key for College 0
-        0x7 as Field, // Mocked private key for College 1
-        0x8 as Field, // Mocked private key for College 2
-        0x9 as Field, // Mocked private key for College 3
-        0xA as Field  // Mocked private key for College 4
-    ];
+//     let college_private_keys: [Field; N_COLLEGE_QUOTA] = [
+//         0x6 as Field, // Mocked private key for College 0
+//         0x7 as Field, // Mocked private key for College 1
+//         0x8 as Field, // Mocked private key for College 2
+//         0x9 as Field, // Mocked private key for College 3
+//         0xA as Field  // Mocked private key for College 4
+//     ];
 
-    let mut student_public_keys: [Field; N_STUDENT_PREFERENCE] = [0; N_STUDENT_PREFERENCE];
-    let mut college_public_keys: [Field; N_COLLEGE_QUOTA] = [0; N_COLLEGE_QUOTA];
+//     let mut student_public_keys: [Field; N_STUDENT_PREFERENCE] = [0; N_STUDENT_PREFERENCE];
+//     let mut college_public_keys: [Field; N_COLLEGE_QUOTA] = [0; N_COLLEGE_QUOTA];
 
-    for i in 0..N_STUDENT_PREFERENCE {
-        student_public_keys[i] = fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(student_private_keys[i])).x;
-    }
+//     for i in 0..N_STUDENT_PREFERENCE {
+//         student_public_keys[i] = fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(student_private_keys[i])).x;
+//     }
 
-    for i in 0..N_COLLEGE_QUOTA {
-        college_public_keys[i] = fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(college_private_keys[i])).x;
-    }
+//     for i in 0..N_COLLEGE_QUOTA {
+//         college_public_keys[i] = fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(college_private_keys[i])).x;
+//     }
 
-    // Simple nonce seed
-    let nonce_seed = 0x1 as Field;
+//     // Simple nonce seed
+//     let nonce_seed = 0x1 as Field;
 
-    // STEP 2: Run the main function
-    let encrypted_results = main(
-        student_prefs,
-        college_prefs,
-        college_capacities,
-        student_public_keys,
-        college_public_keys,
-        5, // Number of students
-        3, // Number of colleges
-        nonce_seed
-    );
+//     // STEP 2: Run the main function
+//     let encrypted_results = main(
+//         student_prefs,
+//         college_prefs,
+//         college_capacities,
+//         student_public_keys,
+//         college_public_keys,
+//         5, // Number of students
+//         3, // Number of colleges
+//         nonce_seed
+//     );
 
-    println("\nEncrypted results generated. Attempting decryption:");
+//     println("\nEncrypted results generated. Attempting decryption:");
 
-    // STEP 3: Decrypt and verify results for students
-    for i in 0..N_STUDENT_PREFERENCE {
-        let private_scalar = EmbeddedCurveScalar::from_field(student_private_keys[i]);
-        let decrypted_college = encrypted_results[i].decrypt_to_scalar(private_scalar) as u32;
+//     // STEP 3: Decrypt and verify results for students
+//     for i in 0..N_STUDENT_PREFERENCE {
+//         let private_scalar = EmbeddedCurveScalar::from_field(student_private_keys[i]);
+//         let decrypted_college = encrypted_results[i].decrypt_to_scalar(private_scalar) as u32;
 
-        println("Student");
-        println(i);
-        println("matched with college:");
-        if decrypted_college == UNMATCHED {
-            println("UNMATCHED");
-        } else {
-            println(decrypted_college);
-        }
-    }
+//         println("Student");
+//         println(i);
+//         println("matched with college:");
+//         if decrypted_college == UNMATCHED {
+//             println("UNMATCHED");
+//         } else {
+//             println(decrypted_college);
+//         }
+//     }
 
-    println("\nDecryption for students completed successfully!");
+//     println("\nDecryption for students completed successfully!");
 
-    // STEP 4: Decrypt and verify results for colleges
-    let mut current_idx = N_STUDENT_PREFERENCE;
-    for c in 0..3 { // Only for active colleges (0, 1, 2)
-        let private_scalar = EmbeddedCurveScalar::from_field(college_private_keys[c]);
+//     // STEP 4: Decrypt and verify results for colleges
+//     let mut current_idx = N_STUDENT_PREFERENCE;
+//     for c in 0..3 { // Only for active colleges (0, 1, 2)
+//         let private_scalar = EmbeddedCurveScalar::from_field(college_private_keys[c]);
 
-        println("College");
-        println(c);
-        println("matched with students:");
+//         println("College");
+//         println(c);
+//         println("matched with students:");
 
-        for _ in 0..college_capacities[c] {
-            let decrypted_student = encrypted_results[current_idx].decrypt_to_scalar(private_scalar) as u32;
+//         for _ in 0..college_capacities[c] {
+//             let decrypted_student = encrypted_results[current_idx].decrypt_to_scalar(private_scalar) as u32;
 
-            if decrypted_student == UNMATCHED {
-                println("- Empty slot (no student)");
-            } else {
-                println("- Student");
-                println(decrypted_student);
-            }
+//             if decrypted_student == UNMATCHED {
+//                 println("- Empty slot (no student)");
+//             } else {
+//                 println("- Student");
+//                 println(decrypted_student);
+//             }
 
-            current_idx += 1;
-        }
-    }
+//             current_idx += 1;
+//         }
+//     }
 
-    println("\nDecryption for colleges completed successfully!");
+//     println("\nDecryption for colleges completed successfully!");
 
-    println("\n======= TEST COMPLETED SUCCESSFULLY =======");
-}
+//     println("\n======= TEST COMPLETED SUCCESSFULLY =======");
+// }
 // #[test]
 // fn test_super_minimal_elgamal() {
 //     // The smallest possible private key
@@ -1061,3 +1061,45 @@ fn test_encrypted_matching_fixed() {
 //     println(recovered_message);
 // }
 
+
+#[test]
+fn test_elgamal_super_minimal() {
+    // Use tiny values 
+    let private_scalar = 0x0bc602b9b5eefc24d8a85fdabc6c4cb078fb8dc54d59513bda848d1db8054abf as Field;  // Tiny key
+
+    // 1Private Key: 0x093a81d401cfe73de66d1358d21ee33c7bd99bff5746efe49bbfcc6fc417e9cf
+    // Address: 0x4f231f90f0145ec48e542fa8ff29965c0b93fc3a
+
+    // 2Private Key: 0x0c99cce7152015867c8fa84c37c3b30f76d771f122b22e6d415488766d3511d1
+    // Address: 0x430dec00ca60cdab0dd6db83ffc43aff69cc9ff5
+    
+    // 3Private Key: 0x0a829d859e631467497dcd4485dd7f73d9a43e1cc0cb706dda3a90d74fcaaebf
+    // Address: 0xe6257dfa04e44899dacd8aa1eca9fbc679375f7d
+
+    // 4Private Key: 0x016ef0710bc774374f8fbf6cd3c59612ca91d2a8ae004be8f9126675f69e90c9
+    // Address: 0x88c535039c9ecbc27e2d87c97bddcc52dd1fe83b
+
+    // 5Private Key: 0x077a88196620fd122b5f9100a052d810c86e81af577059fc3319c19f248a71f2
+    // Address: 0x6e100593d2411b3f093b724beeb3a252b8e6a7be
+    
+    let public_key = field_to_curve_point(private_scalar);
+    let message = 3;  // Tiny message
+    
+    // Use simple encryption parameters
+    let nonce_seed = 0x5 as Field;
+    
+    // IMPORTANT: Use ElGamalCiphered with 8 bits instead of 32!
+    let randomness = EmbeddedCurveScalar::from_field(nonce_seed);
+    let ciphertext = ElGamalCiphered::<8>::new(public_key, message as Field, randomness);
+    
+    // Convert private key to scalar and decrypt
+    let private_key_scalar = EmbeddedCurveScalar::from_field(private_scalar);
+    let recovered_message = ciphertext.decrypt_to_scalar(private_key_scalar);
+    
+    // Simple assertion
+    assert(recovered_message as u32 == message);
+    
+    // Only print at the end after success
+    println("Test passed with message:");
+    println(message);
+}

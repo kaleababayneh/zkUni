@@ -144,6 +144,7 @@ pub unconstrained fn baby_giant_unconstrained<let BITS_DL: u32>(plain_embedded: 
 fn test_main_20() {
   let message = 1028430; // 20-bit
   let private_key: Field = 0x04c330a81537c0d29cc09e8b2b9c43fc5fb5a9d244ab741fc88dff3d40dbd75c; // chosen randomly between 0 and bjj_l-1
+  
   let randomness: Field = 0x010fe5884a7852054a21e21e549520352f563f03d3f79e66a2d75fbd2a21d5cf; // chosen randomly between 0 and bjj_l-1, and never reused
 
   let private_key = EmbeddedCurveScalar::from_field(private_key);
