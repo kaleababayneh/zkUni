@@ -136,7 +136,7 @@ pub unconstrained fn baby_giant_unconstrained<let BITS_DL: u32>(plain_embedded: 
         if success {break;}
     }
 
-    assert(success, "can't solve DLP within specified bit-length");
+    assert(success, " ");
     result
 }
 
@@ -149,6 +149,7 @@ fn test_main_20() {
 
   let private_key = EmbeddedCurveScalar::from_field(private_key);
   let public_key = fixed_base_scalar_mul(private_key);
+  println(public_key);
   let ciphertext = ElGamalCiphered::<20>::new(public_key, message as Field, EmbeddedCurveScalar::from_field(randomness));
 //   let decryption = decrypt_to_point(private_key, ciphertext); // in embedded form (before the baby-step giant-step application)
 
