@@ -5,47 +5,13 @@ use crate::elgamal::{ElGamalCiphered, EmbeddedCurvePoint, EmbeddedCurveScalar, f
 global N_STUDENT_PREFERENCE: u32 = 5;
 global N_COLLEGE_QUOTA: u32 = 5;
 global MAX_PREFS: u32 = 5;
-global MAX_COLLEGE_CAPACITY: u32 = 3;   // upper bound for any college quota
-global ENCRYPTED_SIZE: u32 = 4;  // Size of encrypted data structure
-global TOTAL_ENCRYPTIONS: u32 = N_STUDENT_PREFERENCE + (N_COLLEGE_QUOTA * MAX_COLLEGE_CAPACITY); // Max possible number of encryptions
-global UNMATCHED: Field = 9;
+global MAX_COLLEGE_CAPACITY: u32 = 3;   
+global ENCRYPTED_SIZE: u32 = 4;  
+global TOTAL_ENCRYPTIONS: u32 = N_STUDENT_PREFERENCE + (N_COLLEGE_QUOTA * MAX_COLLEGE_CAPACITY); 
+global UNMATCHED: Field = 999;
 global BITS_DL: u32 = 16; 
 
 
-//onst UNMATCHED_ELGAMAL: ElGamalCiphered<BITS_DL> 
-
-/****           STUDENT PRIVATE KEY               **********/
-// 1Private Key: 0x093a81d401cfe73de66d1358d21ee33c7bd99bff5746efe49bbfcc6fc417e9cf
-// Address: 0x4f231f90f0145ec48e542fa8ff29965c0b93fc3a
-
-// 2Private Key: 0x0c99cce7152015867c8fa84c37c3b30f76d771f122b22e6d415488766d3511d1
-// Address: 0x430dec00ca60cdab0dd6db83ffc43aff69cc9ff5
-
-// 3Private Key: 0x0a829d859e631467497dcd4485dd7f73d9a43e1cc0cb706dda3a90d74fcaaebf
-// Address: 0xe6257dfa04e44899dacd8aa1eca9fbc679375f7d
-
-// 4Private Key: 0x016ef0710bc774374f8fbf6cd3c59612ca91d2a8ae004be8f9126675f69e90c9
-// Address: 0x88c535039c9ecbc27e2d87c97bddcc52dd1fe83b
-
-// 5Private Key: 0x077a88196620fd122b5f9100a052d810c86e81af577059fc3319c19f248a71f2
-// Address: 0x6e100593d2411b3f093b724beeb3a252b8e6a7be
-
-/****           COLLEGE PRIVATE KEY               **********/
-
-// 1Private Key: 0x07a87786dbf1840dec2b804c64c333e6e1d7925dcccf7bdff4ee183f86cc370e
-// Address: 0x62e1785593d92f52bfe162bc4c975dae37726d6a
-
-// 2Private Key: 0x06e1b407e49760702e61698985b0325ddd9e583f544d4bacff0aa57a213b735e
-// Address: 0x8b0b0861d77d87c6ff34fe6e5574793a7036f460
-
-// 3Private Key: 0x0c43da8120542d2c5027a55a0d0f20ec029789c825f9a62509761732e25b887c
-// Address: 0x02ec9331a737670e9e73a74be6d023dbb66d8246
-
-// 4Private Key: 0x03c49ccc8c7416f66418c63365beb4b8e2575b830132c47189cb595f2ccb343a
-// Address: 0x8be07db4a7e6e139633e0129bfdd04a76a5a4047
-
-// 5Private Key: 0x04973fa1c556b807b25b50121aa2a816c8787e7cd9e793f5f33ef49686b79058
-// Address: 0x56a4ca66fc67fcb5ea31aed16e26cc9553a7210e
 
 fn encrypt_elgamal(
     message: Field, 
@@ -291,30 +257,3 @@ fn test_main() {
 }
 
 
-
-// fn test_elgamal_super_minimal() {
-//     // Use tiny values 
-//     let private_scalar = 0x093a81d401cfe73de66d1358d21ee33c7bd99bff5746efe49bbfcc6fc417e9cf as Field;  // Tiny key
-
-    
-//     let public_key = field_to_curve_point(private_scalar);
-//     println("Public key:");
-//     println(public_key);
-
-//     let message = 3;  // Tiny message
-//     let nonce_seed = 0x5 as Field;
-//     let randomness = EmbeddedCurveScalar::from_field(nonce_seed);
-
-//     let ciphertext = ElGamalCiphered::<8>::new(public_key, message as Field, randomness);
-    
-//     // Convert private key to scalar and decrypt
-//     let private_key_scalar = EmbeddedCurveScalar::from_field(private_scalar);
-//     let recovered_message = ciphertext.decrypt_to_scalar(private_key_scalar);
-    
-//     // Simple assertion
-//     assert(recovered_message as Field == message);
-    
-//     // Only print at the end after success
-//     println("Test passed with message:");
-//     println(message);
-// }

@@ -211,3 +211,31 @@ fn test_main_20() {
 
 //     assert(16 as u32 == ciphertext_combined.bit_length());
 // }
+
+// #[test]
+// fn test_elgamal_super_minimal() {
+//     // Use tiny values 
+//     let private_scalar = 0x093a81d401cfe73de66d1358d21ee33c7bd99bff5746efe49bbfcc6fc417e9cf as Field;  // Tiny key
+
+    
+//     let public_key = field_to_curve_point(private_scalar);
+//     println("Public key:");
+//     println(public_key);
+
+//     let message = 3;  // Tiny message
+//     let nonce_seed = 0x5 as Field;
+//     let randomness = EmbeddedCurveScalar::from_field(nonce_seed);
+
+//     let ciphertext = ElGamalCiphered::<8>::new(public_key, message as Field, randomness);
+    
+//     // Convert private key to scalar and decrypt
+//     let private_key_scalar = EmbeddedCurveScalar::from_field(private_scalar);
+//     let recovered_message = ciphertext.decrypt_to_scalar(private_key_scalar);
+    
+//     // Simple assertion
+//     assert(recovered_message as Field == message);
+    
+//     // Only print at the end after success
+//     println("Test passed with message:");
+//     println(message);
+// }
