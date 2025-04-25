@@ -9,6 +9,7 @@ global MAX_COLLEGE_CAPACITY: u32 = 3;
 global ENCRYPTED_SIZE: u32 = 4; 
 // 5 student encryptions + up to 3 slots for each of 5 colleges = 20 max
 global TOTAL_ENCRYPTIONS: u32 = N_STUDENT_PREFERENCE + (N_COLLEGE_QUOTA * MAX_COLLEGE_CAPACITY);
+
 global UNMATCHED: Field = 999; 
 global BITS_DL: u32 = 16; 
 
@@ -243,23 +244,41 @@ fn main(
     } 
     
     // 5b. Encrypt college matches 
-    for c in 0..N_COLLEGE_QUOTA { 
-        if c < actual_uni_list { 
-            let college_pub_key = field_to_curve_point(college_public_keys[c]); 
-            for i in 0..MAX_COLLEGE_CAPACITY { 
-                if i < college_capacities[c] as u32 { 
-                    // Encrypt match (or padding) for this college 
-                    result.college_matches[c][i] = encrypt_elgamal( 
-                        college_matches_array[c][i], 
-                        college_pub_key, 
-                        (N_STUDENT_PREFERENCE + c) as Field, // recipient_id 
-                        (N_STUDENT_PREFERENCE + c*MAX_COLLEGE_CAPACITY + i) as Field, // encryption_index 
-                        nonce_seed 
-                    ); 
-                } 
-            } 
-        } 
+// 5b. Encrypt college matches with proper padding
+for c in 0..N_COLLEGE_QUOTA { 
+    if c < actual_uni_list { 
+        let college_pub_key = field_to_curve_point(college_public_keys[c]); 
+        
+        // Count how many real matches this college has
+        let mut real_match_count = 0;
+        for i in 0..MAX_COLLEGE_CAPACITY {
+            if (i < college_capacities[c] as u32) & (college_matches_array[c][i] != UNMATCHED + 1) {
+                real_match_count += 1;
+            }
+        }
+        
+        // Encrypt all slots up to capacity using a fixed-size loop
+        for i in 0..MAX_COLLEGE_CAPACITY { 
+            if i < college_capacities[c] as u32 {
+                // Choose the correct value based on whether this is a real match or padding
+                let value_to_encrypt = if i < real_match_count {
+                    college_matches_array[c][i] // Real match
+                } else {
+                    UNMATCHED + 1 // Padding value
+                };
+                
+                // Encrypt either the real match or the padding
+                result.college_matches[c][i] = encrypt_elgamal( 
+                    value_to_encrypt, 
+                    college_pub_key, 
+                    (N_STUDENT_PREFERENCE + c) as Field, 
+                    (N_STUDENT_PREFERENCE + c*MAX_COLLEGE_CAPACITY + i) as Field, 
+                    nonce_seed 
+                );
+            }
+        }
     } 
+}
     
     result 
 } 
@@ -288,7 +307,7 @@ fn decrypt_college_matches(
     college_private_keys: [Field; N_COLLEGE_QUOTA], 
     college_capacities: [Field; N_COLLEGE_QUOTA] 
 ) -> [[Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] { 
-    let mut decrypted_college_matches: [[Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] = [[0; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA]; 
+    let mut decrypted_college_matches: [[Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] = [[UNMATCHED; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA]; 
     
     for c in 0..N_COLLEGE_QUOTA { 
         if college_capacities[c] as u32 > 0 { 
