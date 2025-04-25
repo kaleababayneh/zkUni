@@ -147,7 +147,7 @@ fn main(
     college_prefs: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA], 
     college_capacities: [Field; N_COLLEGE_QUOTA], 
     student_public_keys: [EmbeddedCurvePoint; N_STUDENT_PREFERENCE], 
-    college_public_keys: [Field; N_COLLEGE_QUOTA], 
+    college_public_keys: [EmbeddedCurvePoint; N_COLLEGE_QUOTA], 
     actual_student_list: u32, 
     actual_uni_list: u32, 
     nonce_seed: Field, // Global seed value for randomness 
@@ -243,7 +243,7 @@ fn main(
     // 5b. Encrypt college matches with proper padding
     for c in 0..N_COLLEGE_QUOTA { 
         if c < actual_uni_list { 
-            let college_pub_key = field_to_curve_point(college_public_keys[c]); 
+            let college_pub_key = college_public_keys[c]; 
             
             // Count how many real matches this college has
             let mut real_match_count = 0;
@@ -376,12 +376,12 @@ fn test_main() {
         0xA as Field 
     ]; 
 
-    let college_public_keys: [Field; N_COLLEGE_QUOTA] = [ 
-        college_private_keys[0], // These should be derived correctly in production 
-        college_private_keys[1], 
-        college_private_keys[2], 
-        college_private_keys[3], 
-        college_private_keys[4] 
+    let college_public_keys: [EmbeddedCurvePoint; N_COLLEGE_QUOTA] = [ 
+         field_to_curve_point(college_private_keys[0]), // These should be derived correctly in production 
+         field_to_curve_point(college_private_keys[1]), 
+         field_to_curve_point(college_private_keys[2]), 
+         field_to_curve_point(college_private_keys[3]), 
+         field_to_curve_point(college_private_keys[4]) 
     ]; 
 
     let college_capacities: [Field; N_COLLEGE_QUOTA] = [3, 1, 1, 0, 0]; 
