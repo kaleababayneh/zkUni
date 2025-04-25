@@ -44,7 +44,6 @@ fn field_to_curve_point(key: Field) -> EmbeddedCurvePoint {
     fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(key)) 
 } 
 
-
 fn stable_matching( 
     student_prefs: [[Field; MAX_PREFS]; N_STUDENT_PREFERENCE], 
     college_prefs: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA], 
@@ -155,9 +154,7 @@ fn main(
     committed_inputs: pub Field, // Public input containing commitment hash
 ) -> pub MatchResults { 
 
-
-
-      let mut input_fields: [Field; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2] = [0; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2];
+    let mut input_fields: [Field; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2] = [0; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2];
     
     // Flatten student preferences
     let mut index = 0;
@@ -243,42 +240,41 @@ fn main(
         } 
     } 
     
-    // 5b. Encrypt college matches 
-// 5b. Encrypt college matches with proper padding
-for c in 0..N_COLLEGE_QUOTA { 
-    if c < actual_uni_list { 
-        let college_pub_key = field_to_curve_point(college_public_keys[c]); 
-        
-        // Count how many real matches this college has
-        let mut real_match_count = 0;
-        for i in 0..MAX_COLLEGE_CAPACITY {
-            if (i < college_capacities[c] as u32) & (college_matches_array[c][i] != UNMATCHED + 1) {
-                real_match_count += 1;
+    // 5b. Encrypt college matches with proper padding
+    for c in 0..N_COLLEGE_QUOTA { 
+        if c < actual_uni_list { 
+            let college_pub_key = field_to_curve_point(college_public_keys[c]); 
+            
+            // Count how many real matches this college has
+            let mut real_match_count = 0;
+            for i in 0..MAX_COLLEGE_CAPACITY {
+                if (i < college_capacities[c] as u32) & (college_matches_array[c][i] != UNMATCHED + 1) {
+                    real_match_count += 1;
+                }
             }
-        }
-        
-        // Encrypt all slots up to capacity using a fixed-size loop
-        for i in 0..MAX_COLLEGE_CAPACITY { 
-            if i < college_capacities[c] as u32 {
-                // Choose the correct value based on whether this is a real match or padding
-                let value_to_encrypt = if i < real_match_count {
-                    college_matches_array[c][i] // Real match
-                } else {
-                    UNMATCHED + 1 // Padding value
-                };
-                
-                // Encrypt either the real match or the padding
-                result.college_matches[c][i] = encrypt_elgamal( 
-                    value_to_encrypt, 
-                    college_pub_key, 
-                    (N_STUDENT_PREFERENCE + c) as Field, 
-                    (N_STUDENT_PREFERENCE + c*MAX_COLLEGE_CAPACITY + i) as Field, 
-                    nonce_seed 
-                );
+            
+            // Encrypt all slots up to capacity using a fixed-size loop
+            for i in 0..MAX_COLLEGE_CAPACITY { 
+                if i < college_capacities[c] as u32 {
+                    // Choose the correct value based on whether this is a real match or padding
+                    let value_to_encrypt = if i < real_match_count {
+                        college_matches_array[c][i] // Real match
+                    } else {
+                        UNMATCHED + 1 // Padding value
+                    };
+                    
+                    // Encrypt either the real match or the padding
+                    result.college_matches[c][i] = encrypt_elgamal( 
+                        value_to_encrypt, 
+                        college_pub_key, 
+                        (N_STUDENT_PREFERENCE + c) as Field, 
+                        (N_STUDENT_PREFERENCE + c*MAX_COLLEGE_CAPACITY + i) as Field, 
+                        nonce_seed 
+                    );
+                }
             }
-        }
-    } 
-}
+        } 
+    }
     
     result 
 } 
@@ -484,4 +480,3 @@ fn test_main() {
     println(""); 
     println("=== Test completed successfully ==="); 
 } 
-
