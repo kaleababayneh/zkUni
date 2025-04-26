@@ -2,10 +2,6 @@ mod elgamal;
 use std::hash::hash_to_field; 
 use crate::elgamal::{ElGamalCiphered, EmbeddedCurvePoint, EmbeddedCurveScalar, fixed_base_scalar_mul}; 
 use std::hash::pedersen_hash;
-use trees::merkle::MerkleTree;
-use trees::types::MT_Creator;
-use trees::types::MembershipProver;
-use trees::types::Calculator;
 
 global N_STUDENT_PREFERENCE: u32 = 5; 
 global N_COLLEGE_QUOTA: u32 = 5; 
@@ -13,20 +9,10 @@ global MAX_PREFS: u32 = 5;
 global MAX_COLLEGE_CAPACITY: u32 = 3; 
 global UNMATCHED: Field = 999; 
 global BITS_DL: u32 = 16; 
-global MERKLE_HEIGHT: u32 = 3; // Adjust based on the number of students
 
 struct MatchResults {
     student_matches: [ElGamalCiphered<BITS_DL>; N_STUDENT_PREFERENCE], 
-    college_matches: [[ElGamalCiphered<BITS_DL>; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA],
-    merkle_root: Field // Public Merkle root of match commitments
-}
-
-// Match commitment for verifiable proofs
-struct MatchCommitment {
-    student_id: Field,
-    college_id: Field,
-    nonce: Field,
-    commitment: Field // Hash of the above values
+    college_matches: [[ElGamalCiphered<BITS_DL>; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] 
 }
 
 fn encrypt_elgamal( 
@@ -204,140 +190,6 @@ fn decrypt_college_matches(
     decrypted_college_matches 
 }
 
-// Generate commitment nonces for all students
-fn generate_match_nonces(
-    actual_student_list: u32,
-    nonce_seed: Field
-) -> [Field; N_STUDENT_PREFERENCE] {
-    let mut nonces = [0; N_STUDENT_PREFERENCE];
-    
-    for i in 0..actual_student_list {
-        nonces[i] = hash_to_field([nonce_seed, (i + 10000) as Field]);
-    }
-    
-    nonces
-}
-
-// Generate commitments for each student-college match
-fn generate_match_commitments(
-    decrypted_matches: [Field; N_STUDENT_PREFERENCE], 
-    actual_student_list: u32,
-    match_nonces: [Field; N_STUDENT_PREFERENCE]
-) -> [Field; N_STUDENT_PREFERENCE] {
-    let mut commitments = [0; N_STUDENT_PREFERENCE];
-    
-    for i in 0..actual_student_list {
-        // Create commitment even for unmatched students
-        let college_id = if decrypted_matches[i] == UNMATCHED {
-            UNMATCHED
-        } else {
-            decrypted_matches[i]
-        };
-        
-        // Commitment = Hash(student_id || college_id || nonce)
-        commitments[i] = pedersen_hash([
-            i as Field,       // Student ID
-            college_id,       // College ID
-            match_nonces[i]   // Nonce for privacy
-        ]);
-    }
-    
-    commitments
-}
-
-// Helper function for hashing pairs in the Merkle tree
-fn pedersen_pair_hash(inputs: [Field; 2]) -> Field {
-    pedersen_hash(inputs)
-}
-
-// Compute a merkle root directly from leaf values
-fn simple_merkle_root(leaves: [Field; N_STUDENT_PREFERENCE]) -> Field {
-    let n = leaves.len();
-    
-    // Create a working array to build the tree bottom-up
-    let mut tree = [0; 2 * N_STUDENT_PREFERENCE];
-    
-    // Copy the leaves to the second half of the array
-    for i in 0..n {
-        tree[n + i] = leaves[i];
-    }
-    
-    // Build the tree bottom-up - Noir doesn't support reverse iteration
-    // so we have to manually calculate indices
-    for i in 0..n {
-        let node_idx = n - i - 1;
-        if node_idx > 0 { // Skip the 0 index
-            tree[node_idx] = pedersen_hash([tree[2 * node_idx], tree[2 * node_idx + 1]]);
-        }
-    }
-    
-    // The root is the first element
-    tree[1]
-}
-
-// Generate a merkle proof for a specific leaf index
-fn simple_merkle_proof(leaves: [Field; N_STUDENT_PREFERENCE], index: u32) -> [Field; MERKLE_HEIGHT] {
-    let n = leaves.len();
-    let mut proof = [0; MERKLE_HEIGHT];
-    
-    // Create a working array for the tree
-    let mut tree = [0; 2 * N_STUDENT_PREFERENCE];
-    
-    // Copy the leaves to the second half of the array
-    for i in 0..n {
-        tree[n + i] = leaves[i];
-    }
-    
-    // Build the tree bottom-up
-    for i in 0..n {
-        let node_idx = n - i - 1;
-        if node_idx > 0 { // Skip the 0 index
-            tree[node_idx] = pedersen_hash([tree[2 * node_idx], tree[2 * node_idx + 1]]);
-        }
-    }
-    
-    // Calculate proof - we know the max proof height is MERKLE_HEIGHT
-    let mut idx = n + index;
-    
-    for proof_index in 0..MERKLE_HEIGHT {
-        if idx > 1 {
-            // We've reached the root or beyond
-   
-        
-        // Add the sibling to the proof
-        let sibling = if idx % 2 == 0 { idx + 1 } else { idx - 1 };
-        proof[proof_index] = tree[sibling];
-        
-        // Move up the tree
-        idx = idx / 2;
-        }
-    }
-    
-    proof
-}
-
-// Verify a merkle proof
-fn verify_simple_merkle_proof(root: Field, leaf: Field, index: u32, proof: [Field; MERKLE_HEIGHT]) -> bool {
-    let mut computed_hash = leaf;
-    let mut idx = index;
-    
-    for i in 0..MERKLE_HEIGHT {
-        if idx % 2 == 0 {
-            // If idx is even, hash with proof element on the right
-            computed_hash = pedersen_hash([computed_hash, proof[i]]);
-        } else {
-            // If idx is odd, hash with proof element on the left
-            computed_hash = pedersen_hash([proof[i], computed_hash]);
-        }
-        
-        // Move up the tree
-        idx = idx / 2;
-    }
-    
-    // Check if the computed hash matches the root
-    computed_hash == root
-}
-
 /// New main function that accepts already-permuted inputs from the client
 /// The server only sees blinded preferences, never the original ones
 fn main_client_permuted( 
@@ -407,24 +259,10 @@ fn main_client_permuted(
     // Add 1 to avoid zero values
     let adjusted_matches = permuted_stable_matches.map(|x| x + 1 as Field); 
     
-    // Generate nonces for match commitments
-    let match_nonces = generate_match_nonces(actual_student_list, nonce_seed);
-    
-    // Generate match commitments for Merkle tree
-    let match_commitments = generate_match_commitments(
-        permuted_stable_matches,
-        actual_student_list,
-        match_nonces
-    );
-    
-    // Compute the Merkle root from match commitments using our simple implementation
-    let merkle_root = simple_merkle_root(match_commitments);
-    
     // 3. Initialize result structures 
     let mut result = MatchResults { 
         student_matches: [UNMATCHED_ELGAMAL; N_STUDENT_PREFERENCE], 
-        college_matches: [[UNMATCHED_ELGAMAL; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA],
-        merkle_root: merkle_root
+        college_matches: [[UNMATCHED_ELGAMAL; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] 
     }; 
     
     // 4. Encrypt matches for students using the permuted public keys
@@ -495,41 +333,6 @@ fn main_client_permuted(
     }
     
     result 
-}
-
-// Generate a Merkle proof for a student's match
-fn generate_student_match_proof(
-    student_id: Field,
-    match_commitments: [Field; N_STUDENT_PREFERENCE]
-) -> [Field; MERKLE_HEIGHT] {
-    simple_merkle_proof(
-        match_commitments,
-        student_id as u32
-    )
-}
-
-// Verify a student's match proof
-fn verify_student_match(
-    claimed_student_id: Field,
-    claimed_college_id: Field,
-    nonce: Field,
-    merkle_proof: [Field; MERKLE_HEIGHT],
-    public_merkle_root: Field
-) -> bool {
-    // Recreate the commitment hash
-    let commitment = pedersen_hash([
-        claimed_student_id,
-        claimed_college_id,
-        nonce
-    ]);
-    
-    // Verify the Merkle proof using our simple implementation
-    verify_simple_merkle_proof(
-        public_merkle_root,
-        commitment,
-        claimed_student_id as u32,
-        merkle_proof
-    )
 }
 
 // Client-side utility functions for permutation
@@ -706,7 +509,6 @@ fn client_unmapped_results(
     
     real_matches
 }
-
 /// Permute private keys according to ID mappings
 fn permute_private_keys(
     private_keys: [Field; N_STUDENT_PREFERENCE],
@@ -937,111 +739,9 @@ fn test_client_permuted_matching() {
         println(permuted_college_matches[c]);
     }
     
-    // Get and display the Merkle root for verification
-    println("");
-    println("7. STEP: Merkle root for match verification");
-    println("Public Merkle root: ");
-    println(encrypted_results.merkle_root);
-    
-    // Generate commitment nonces using same seed
-    let match_nonces = generate_match_nonces(actual_student_list, nonce_seed);
-    
-    // Generate match commitments
-    let match_commitments = generate_match_commitments(
-        permuted_decrypted_student_matches,
-        actual_student_list,
-        match_nonces
-    );
-    
-    // Test verification for student 0 (who becomes student_id_map[0] in permuted space)
-    let student_id = 0;
-    let permuted_student_id = student_id_map[student_id];
-    let student_college_match = permuted_decrypted_student_matches[permuted_student_id];
-    let student_nonce = match_nonces[permuted_student_id];
-    
-    // Generate Merkle proof for this student
-    let merkle_proof = generate_student_match_proof(
-        permuted_student_id as Field,
-        match_commitments
-    );
-    
-    println("");
-    println("8. STEP: Student generates proof of acceptance");
-    println("Student (original ID): ");
-    println(student_id);
-    println("Matched with college (permuted ID): ");
-    println(student_college_match);
-    
-    // Verify the proof
-    let verification_result = verify_student_match(
-        permuted_student_id as Field,
-        student_college_match,
-        student_nonce,
-        merkle_proof,
-        encrypted_results.merkle_root
-    );
-    
-    println("");
-    println("9. STEP: Third party verifies the proof");
-    println("Verification result: ");
-    println(verification_result);
+    // Each college would need to do similar unmasking
     
     println("");
     println("=== Client-side permutation test completed successfully ===");
     println("Server never saw the original preferences or the actual matching results!");
-    println("Students can prove their acceptance to third parties!");
-}
-
-#[test]
-fn test_merkle_proof_verification() {
-    // Create a simple set of match commitments
-    let mut match_commitments = [0; N_STUDENT_PREFERENCE];
-    
-    // Generate random commitments
-    for i in 0..N_STUDENT_PREFERENCE {
-        match_commitments[i] = hash_to_field([i as Field, (i+100) as Field, (i*10) as Field]);
-    }
-    
-    // Compute Merkle root
-    let merkle_root = simple_merkle_root(match_commitments);
-    
-    // Generate proof for a specific student
-    let student_id = 2;
-    let proof = simple_merkle_proof(match_commitments, student_id);
-    
-    // Verify the proof - should succeed
-    let verification_result = verify_simple_merkle_proof(
-        merkle_root,
-        match_commitments[student_id],
-        student_id,
-        proof
-    );
-    
-    println("Valid proof verification result (should be true): ");
-    println(verification_result);
-    
-    // Test wrong index without asserting
-    let wrong_index_result = verify_simple_merkle_proof(
-        merkle_root,
-        match_commitments[student_id],
-        student_id + 1,
-        proof
-    );
-    
-    println("Wrong index verification result (should be false): ");
-    println(wrong_index_result);
-    
-    // Test fake commitment without asserting
-    let fake_commitment = hash_to_field([student_id as Field, 999 as Field, 123 as Field]);
-    let fake_commitment_result = verify_simple_merkle_proof(
-        merkle_root,
-        fake_commitment,
-        student_id,
-        proof
-    );
-    
-    println("Fake commitment verification result (should be false): ");
-    println(fake_commitment_result);
-    
-    println("Merkle proof verification test completed!");
 }
