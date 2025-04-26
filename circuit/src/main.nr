@@ -9,7 +9,6 @@ global MAX_PREFS: u32 = 5;
 global MAX_COLLEGE_CAPACITY: u32 = 3; 
 global UNMATCHED: Field = 999; 
 global BITS_DL: u32 = 16; 
-global MAX_COLLEGE_CAPACITY: u32 = 3;
 
 struct MatchResults {
     student_matches: [ElGamalCiphered<BITS_DL>; N_STUDENT_PREFERENCE], 
