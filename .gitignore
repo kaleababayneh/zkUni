@@ -1,2 +1,6 @@
 node_modules
 .vscode
+circuit/trees/lib.nr
+circuit/trees/types.nr
+circuit/trees/sparse_merkle.nr
+circuit/trees/merkle.nr
