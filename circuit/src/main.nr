@@ -1,28 +1,106 @@
 mod elgamal; 
-use std::hash::hash_to_field; 
-use crate::elgamal::{ElGamalCiphered, EmbeddedCurvePoint, EmbeddedCurveScalar, fixed_base_scalar_mul}; 
-use std::hash::pedersen_hash;
 
-global N_STUDENT_PREFERENCE: u32 = 5; 
-global N_COLLEGE_QUOTA: u32 = 5; 
-global MAX_PREFS: u32 = 5; 
-global MAX_COLLEGE_CAPACITY: u32 = 3; 
-global UNMATCHED: Field = 999; 
+use std::hash::hash_to_field; 
+use std::hash::pedersen_hash;
+use crate::elgamal::{ElGamalCiphered, EmbeddedCurvePoint, EmbeddedCurveScalar, fixed_base_scalar_mul}; 
+
+//===== GLOBAL CONSTANTS =====
+global MAX_HOSPITALS: u32 = 10;
+global MAX_PATIENTS_PER_HOSPITAL: u32 = 20;
+global MAX_DONORS_PER_HOSPITAL: u32 = 20;
+global MAX_EDGES: u32 = 100;
+global MAX_CYCLES: u32 = 15;
+global MAX_CYCLE_LENGTH: u32 = 5;
+global NO_MATCH: Field = 999;
 global BITS_DL: u32 = 16; 
 
-struct MatchResults {
-    student_matches: [ElGamalCiphered<BITS_DL>; N_STUDENT_PREFERENCE], 
-    college_matches: [[ElGamalCiphered<BITS_DL>; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] 
+// Blood types encoded as Field values
+global BLOOD_TYPE_A: Field = 0;
+global BLOOD_TYPE_B: Field = 1;
+global BLOOD_TYPE_AB: Field = 2;
+global BLOOD_TYPE_O: Field = 3;
+
+//===== DATA STRUCTURES =====
+// Medical profile for a donor or recipient
+struct MedicalProfile {
+    blood_type: Field,          // Encoded blood type (A=0, B=1, AB=2, O=3)
+    hla_antigens: [Field; 6],   // HLA typing data
+    pra_score: Field,           // Panel Reactive Antibody (0-100)
+    age: Field,                 // Age of donor/patient
+    additional_factors: Field   // Hash of other medical factors
 }
 
-fn encrypt_elgamal( 
+// Represents a donor
+struct Donor {
+    id: Field,                  // Unique donor ID
+    hospital_id: Field,         // Hospital ID
+    medical_profile: MedicalProfile
+}
+
+// Represents a recipient
+struct Recipient {
+    id: Field,                  // Unique recipient ID
+    hospital_id: Field,         // Hospital ID
+    medical_profile: MedicalProfile, 
+    donor_id: Field             // ID of paired donor
+}
+
+// A pair of donor and recipient (typically family members)
+struct DonorRecipientPair {
+    donor: Donor,
+    recipient: Recipient
+}
+
+// Zero-knowledge proof that verifies compatibility without revealing medical data
+struct CompatibilityProof {
+    hospital_id: Field,             // ID of the hospital that generated the proof
+    donor_commitment: Field,        // Commitment to donor data
+    recipient_commitment: Field,    // Commitment to recipient data
+    compatibility_result: Field,    // 1 = compatible, 0 = incompatible
+    proof_signature: Field          // Hospital's signature on the proof
+}
+
+// Represents an edge in the compatibility graph
+struct CompatibilityEdge {
+    from_hospital_id: Field,
+    from_pair_id: Field,
+    to_hospital_id: Field, 
+    to_pair_id: Field,
+    compatibility_proof: CompatibilityProof
+}
+
+// Results of the kidney exchange
+struct ExchangeResult {
+    cycles: [[Field; MAX_CYCLE_LENGTH]; MAX_CYCLES], // Each cycle is a sequence of pair IDs
+    cycle_lengths: [Field; MAX_CYCLES],              // Length of each cycle
+    cycle_count: Field                               // Number of cycles found
+}
+
+// Encrypted results for each hospital
+struct EncryptedHospitalResult {
+    hospital_id: Field,
+    encrypted_cycles: [[ElGamalCiphered<BITS_DL>; MAX_CYCLE_LENGTH]; MAX_CYCLES],
+    cycle_lengths: [ElGamalCiphered<BITS_DL>; MAX_CYCLES],
+    encrypted_cycle_count: ElGamalCiphered<BITS_DL>
+}
+
+// Collection of results for all hospitals
+struct KidneyExchangeResults {
+    hospital_results: [EncryptedHospitalResult; MAX_HOSPITALS]
+}
+
+//===== UTILITY FUNCTIONS =====
+fn field_to_curve_point(key: Field) -> EmbeddedCurvePoint { 
+    fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(key)) 
+}
+
+fn encrypt_elgamal(
     message: Field, 
     public_key: EmbeddedCurvePoint, 
-    recipient_id: Field, // Used for routing in distributed systems 
-    encryption_index: Field, // Unique index for this encryption 
+    recipient_id: Field, 
+    encryption_index: Field, 
     nonce_seed: Field 
 ) -> ElGamalCiphered<BITS_DL> {
-    
     let randomness_seed = hash_to_field([
         message as Field,
         public_key.x,
@@ -35,713 +113,876 @@ fn encrypt_elgamal(
     let randomness = EmbeddedCurveScalar::from_field(randomness_seed); 
     
     ElGamalCiphered::<BITS_DL>::new(public_key, message as Field, randomness) 
-} 
+}
 
-fn field_to_curve_point(key: Field) -> EmbeddedCurvePoint { 
-    fixed_base_scalar_mul(EmbeddedCurveScalar::from_field(key)) 
-} 
+//===== COMPATIBILITY CHECKING FUNCTIONS =====
+// Check blood type compatibility
+// Returns true if donor blood type is compatible with recipient
+fn check_blood_compatibility(donor_blood: Field, recipient_blood: Field) -> bool {
+    // Blood type compatibility rules:
+    // O can donate to anyone
+    // A can donate to A and AB
+    // B can donate to B and AB
+    // AB can donate only to AB
+    
+    // O donor
+    let mut return_value = false;
+    if donor_blood == BLOOD_TYPE_O {
+        return_value = true;
+    } 
+    
+    // A donor
+    if donor_blood == BLOOD_TYPE_A {
+        if (recipient_blood == BLOOD_TYPE_A) | (recipient_blood == BLOOD_TYPE_AB) {
+            return_value = true;
+        }
+    }
+    
+    // B donor
+    if donor_blood == BLOOD_TYPE_B {
+       if(recipient_blood == BLOOD_TYPE_B) | (recipient_blood == BLOOD_TYPE_AB) {
+            return_value = true;
+        }
+    }
+    
+    // AB donor
+    if donor_blood == BLOOD_TYPE_AB {
+        if recipient_blood == BLOOD_TYPE_AB {
+            return_value = true;
+        }
+    }
+    
+    return_value
+}
 
-fn stable_matching( 
-    student_prefs: [[Field; MAX_PREFS]; N_STUDENT_PREFERENCE], 
-    college_prefs: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA], 
-    college_capacities: [Field; N_COLLEGE_QUOTA], 
-    actual_student_list: u32, 
-    actual_uni_list: u32 
-) -> [Field; N_STUDENT_PREFERENCE] { 
+// Check HLA compatibility
+fn check_hla_compatibility(donor_hla: [Field; 6], recipient_hla: [Field; 6], pra_score: Field) -> bool {
+    let mut match_count = 0;
+    let mut mismatch_count = 0;
+    
+    // Count matching and mismatching HLA antigens
+    for i in 0..6 {
+        if donor_hla[i] == recipient_hla[i] {
+            match_count += 1;
+        } else if (donor_hla[i]  != 0) & (recipient_hla[i] != 0 ){
+            // Both have antigens but they don't match
+            mismatch_count += 1;
+        }
+    }
+    
+    // Simplified compatibility check
+    // Higher PRA means more antibodies, so we need more matches
+    // This is a simplified model - real HLA matching is more complex
+    let pra_threshold = pra_score / 20; // Convert 0-100 to 0-5 scale
+    let compatibility_score = match_count - mismatch_count;
+    
+    compatibility_score > pra_threshold as u32
+}
 
-    let mut next_application: [Field; N_STUDENT_PREFERENCE] = [0; N_STUDENT_PREFERENCE]; 
-    let mut free_student: [bool; N_STUDENT_PREFERENCE] = [true; N_STUDENT_PREFERENCE]; 
-    let mut current_match: [Field; N_STUDENT_PREFERENCE] = [UNMATCHED; N_STUDENT_PREFERENCE]; 
+// Check age and other medical factors compatibility
+fn check_additional_compatibility(donor_age: Field, donor_factors: Field, 
+                                 recipient_age: Field, recipient_factors: Field) -> bool {
+    // Simplified compatibility check
+    // In reality, this would involve many medical factors
+    // For this demonstration, we'll use simple rules:
+    let mut age_diff = 0;
+    // Age difference should not be too large (simplified)
+    if donor_age as u32 > recipient_age as u32 { 
+        age_diff = donor_age as u32 - recipient_age  as u32;
+    } else { 
+        age_diff = recipient_age as u32 - donor_age  as u32;
+    };
+    
+    // Simple check: if factors hash to same parity, they're compatible
+    let factors_compatible = (donor_factors as u32 % 2) == (recipient_factors as u32 % 2);
+    
+    // Combined check
+    (age_diff as u32 < 30) & factors_compatible
+}
 
-    let mut college_count: [Field; N_COLLEGE_QUOTA] = [0; N_COLLEGE_QUOTA]; 
-    let mut college_matches: [[Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] = [[UNMATCHED; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA]; 
+// Comprehensive compatibility check combining all factors
+fn check_donor_recipient_compatibility(
+    donor: MedicalProfile, 
+    recipient: MedicalProfile
+) -> bool {
+    // Check blood type compatibility
+    let blood_compatible = check_blood_compatibility(donor.blood_type, recipient.blood_type);
+    
+    // Check HLA compatibility
+    let hla_compatible = check_hla_compatibility(
+        donor.hla_antigens, 
+        recipient.hla_antigens, 
+        recipient.pra_score
+    );
+    
+    // Check additional factors
+    let additional_compatible = check_additional_compatibility(
+        donor.age, 
+        donor.additional_factors,
+        recipient.age, 
+        recipient.additional_factors
+    );
+    
+    // All checks must pass
+    blood_compatible & hla_compatible & additional_compatible
+}
 
-    // Precompute college preference rankings for O(1) lookup during matching 
-    let mut college_ranks: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA] = [[0; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA]; 
-    for w in 0..N_COLLEGE_QUOTA {
-        if w < actual_uni_list {
-            for r in 0..N_STUDENT_PREFERENCE {
-                if r < actual_student_list {
-                    let s = college_prefs[w][r];
-                    college_ranks[w][s] = r as Field;
+//===== ZERO-KNOWLEDGE PROOFS =====
+// Generate a ZK proof of compatibility without revealing medical details
+fn generate_compatibility_proof(
+    donor: Donor,
+    recipient: Recipient,
+    hospital_private_key: Field
+) -> CompatibilityProof {
+    // Compute compatibility
+    let is_compatible = check_donor_recipient_compatibility(
+        donor.medical_profile, 
+        recipient.medical_profile
+    );
+    
+    // Create commitments to medical data
+    let donor_commitment = pedersen_hash([
+        donor.id,
+        donor.hospital_id,
+        donor.medical_profile.blood_type,
+        donor.medical_profile.pra_score,
+        donor.medical_profile.age,
+        donor.medical_profile.additional_factors
+        // We'd include HLA data too in a real implementation
+    ]);
+    
+    let recipient_commitment = pedersen_hash([
+        recipient.id,
+        recipient.hospital_id,
+        recipient.medical_profile.blood_type,
+        recipient.medical_profile.pra_score,
+        recipient.medical_profile.age,
+        recipient.medical_profile.additional_factors,
+        recipient.donor_id
+        // We'd include HLA data too in a real implementation
+    ]);
+    
+    // Result: 1 for compatible, 0 for incompatible
+    let compatibility_result = if is_compatible { 1 } else { 0 };
+    
+    // Sign the proof using the hospital's private key
+    let signature_input = [
+        donor_commitment,
+        recipient_commitment,
+        compatibility_result,
+        hospital_private_key
+    ];
+    
+    let proof_signature = pedersen_hash(signature_input);
+    
+    CompatibilityProof {
+        hospital_id: donor.hospital_id,
+        donor_commitment,
+        recipient_commitment,
+        compatibility_result,
+        proof_signature
+    }
+}
+
+// Verify a compatibility proof using the hospital's public key
+fn verify_compatibility_proof(
+    proof: CompatibilityProof,
+    hospital_public_key: Field
+) -> bool {
+    // Reconstruct what the signature should be
+    let expected_signature_input = [
+        proof.donor_commitment,
+        proof.recipient_commitment,
+        proof.compatibility_result,
+        hospital_public_key
+    ];
+    
+    let expected_signature = pedersen_hash(expected_signature_input);
+    
+    // Verify the signature
+    expected_signature == proof.proof_signature
+}
+
+//===== GRAPH CONSTRUCTION =====
+// Build the compatibility graph from ZK proofs
+fn build_compatibility_graph(
+    compatibility_proofs: [CompatibilityProof; MAX_EDGES],
+    proof_count: Field,
+    hospital_public_keys: [Field; MAX_HOSPITALS]
+) -> [CompatibilityEdge; MAX_EDGES] {
+    let mut graph = [CompatibilityEdge {
+        from_hospital_id: 0,
+        from_pair_id: 0,
+        to_hospital_id: 0,
+        to_pair_id: 0,
+        compatibility_proof: CompatibilityProof {
+            hospital_id: 0,
+            donor_commitment: 0,
+            recipient_commitment: 0,
+            compatibility_result: 0,
+            proof_signature: 0
+        }
+    }; MAX_EDGES];
+    
+    let mut valid_edge_count = 0;
+    
+    for i in 0..MAX_EDGES {
+        if i < proof_count as u32 {
+            let proof = compatibility_proofs[i];
+            
+            // Verify the proof using the hospital's public key
+            let hospital_id = proof.hospital_id as u32;
+            let is_valid = verify_compatibility_proof(
+                proof,
+                hospital_public_keys[hospital_id]
+            );
+            
+            // Only add to graph if proof is valid and shows compatibility
+            if is_valid & (proof.compatibility_result == 1) {
+                // We'd extract IDs from the proofs in practice
+                // For simplicity, we're using i as the edge ID
+                graph[valid_edge_count] = CompatibilityEdge {
+                    from_hospital_id:  (i / 10) as Field, // Simplified for demo
+                    from_pair_id: (i % 10) as Field,     // Simplified for demo
+                    to_hospital_id: ((i*3) % MAX_HOSPITALS) as Field, // Simplified for demo
+                    to_pair_id: ((i*7) % 10) as Field,   // Simplified for demo
+                    compatibility_proof: proof
+                };
+                
+                valid_edge_count += 1;
+            }
+        }
+    }
+    
+    graph
+}
+
+//===== MATCHING ALGORITHM =====
+// Find cycles in the compatibility graph
+fn find_exchange_cycles(
+    graph: [CompatibilityEdge; MAX_EDGES],
+    valid_edge_count: Field
+) -> ExchangeResult {
+    let mut cycles = [[NO_MATCH; MAX_CYCLE_LENGTH]; MAX_CYCLES];
+    let mut cycle_lengths = [0; MAX_CYCLES];
+    let mut cycle_count = 0;
+    
+    // For simplicity, we'll just find 2-way and 3-way cycles
+    // In practice, a more sophisticated algorithm would be used
+    
+    // Find 2-way cycles (A->B, B->A)
+    for i in 0..MAX_EDGES {
+        if i < valid_edge_count as u32 {
+            let edge_i = graph[i];
+            
+            for j in 0..MAX_EDGES {
+                if j < valid_edge_count as u32 & (j != i) {
+                    let edge_j = graph[j];
+                    
+                    // Check if the edges form a 2-way cycle
+                    if (edge_i.to_hospital_id == edge_j.from_hospital_id) &
+                       (edge_i.to_pair_id == edge_j.from_pair_id) &
+                       (edge_j.to_hospital_id == edge_i.from_hospital_id) &
+                       (edge_j.to_pair_id == edge_i.from_pair_id) {
+                        
+                        // Found a 2-way cycle
+                        if cycle_count < MAX_CYCLES as u32 {
+                            cycles[cycle_count][0] = i as Field;
+                            cycles[cycle_count][1] = j as Field;
+                            cycle_lengths[cycle_count] = 2;
+                            cycle_count += 1;
+                        }
+                    }
                 }
             }
         }
     }
-
-    // Maximum number of iterations needed (each student could try all preferences) 
-    let max_iterations = N_STUDENT_PREFERENCE * MAX_PREFS; 
-    let mut should_continue = true; 
-
-    // Main matching algorithm loop 
-    for _ in 0..max_iterations { 
-        let mut progress = false; // Track if any new proposal happened in this iteration 
-
-        if should_continue { 
-            for s in 0..N_STUDENT_PREFERENCE { 
-                if (s < actual_student_list) & free_student[s] { 
-                    if next_application[s] as u32 < MAX_PREFS { 
-                        let c = student_prefs[s][next_application[s]]; 
-                        next_application[s] += 1; 
-
-                        if (c as u32 != UNMATCHED as u32) & (c as u32 < actual_uni_list as u32) { 
-                            progress = true; 
-                           
-                            if college_count[c] as u32 < college_capacities[c] as u32 { 
-                                // College has space, accept student directly 
-                                let idx = college_count[c]; 
-                                college_matches[c][idx] = s as Field; 
-                                college_count[c] += 1; 
-                                current_match[s] = c; 
-                                free_student[s] = false; 
-                            } else { 
-                                // College is full, check if student should replace another 
-                                let mut worst_idx: u32 = 0; 
-                                let mut worst_rank: u32 = 0; 
-                                let mut first = true; 
-                                
-                                // Find the least preferred student currently matched to college c 
-                                for i in 0..MAX_COLLEGE_CAPACITY { 
-                                    if i < college_capacities[c] as u32 { 
-                                        let curr_s = college_matches[c][i]; 
-                                        let rnk = college_ranks[c][curr_s]; 
-                                        if first | (rnk as u32 > worst_rank) { 
-                                            first = false; 
-                                            worst_rank = rnk as u32; 
-                                            worst_idx = i; 
-                                        } 
-                                    } 
-                                } 
-
-                                // If current student is preferred over the worst match, replace 
-                                if college_ranks[c][s] as u32 < worst_rank as u32 { 
-                                    let replaced = college_matches[c][worst_idx]; 
-                                    college_matches[c][worst_idx] = s as Field; 
-                                    current_match[s] = c; 
-                                    free_student[s] = false; 
-
-                                    // Replaced student becomes free again 
-                                    current_match[replaced] = UNMATCHED; 
-                                    free_student[replaced] = true; 
-                                } 
-                            } 
-                        } 
-                    } 
-                } 
-            } 
-        } 
-
-        // Update the continue flag instead of using break 
-        should_continue = progress; 
-    } 
-
-    current_match 
-}
-
-/// Decrypt student matches for verification 
-fn decrypt_student_matches( 
-    encrypted_results: MatchResults, 
-    student_private_keys: [Field; N_STUDENT_PREFERENCE] 
-) -> [Field; N_STUDENT_PREFERENCE] { 
-    let mut decrypted_message: [Field; N_STUDENT_PREFERENCE] = [0; N_STUDENT_PREFERENCE]; 
     
-    for i in 0..N_STUDENT_PREFERENCE { 
-        if !(encrypted_results.student_matches[i].c1.is_infinite) { 
-            let private_scalar = EmbeddedCurveScalar::from_field(student_private_keys[i]); 
-            decrypted_message[i] = encrypted_results.student_matches[i].decrypt_to_scalar(private_scalar) as Field; 
-        } 
-    } 
-    
-    // Convert back to original values (remove the +1 adjustment) 
-    decrypted_message.map(|x| x - 1 as Field) 
-} 
-
-/// Decrypt college matches for verification 
-fn decrypt_college_matches( 
-    encrypted_results: MatchResults, 
-    college_private_keys: [Field; N_COLLEGE_QUOTA], 
-    college_capacities: [Field; N_COLLEGE_QUOTA] 
-) -> [[Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] { 
-    let mut decrypted_college_matches: [[Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] = [[UNMATCHED; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA]; 
-    
-    for c in 0..N_COLLEGE_QUOTA { 
-        if college_capacities[c] as u32 > 0 { 
-            let private_scalar = EmbeddedCurveScalar::from_field(college_private_keys[c]); 
+    // Find 3-way cycles (A->B, B->C, C->A)
+    for i in 0..MAX_EDGES {
+        if i < valid_edge_count as u32 {
+            let edge_i = graph[i];
             
-            for i in 0..MAX_COLLEGE_CAPACITY { 
-                if i < college_capacities[c] as u32 { 
-                    if !(encrypted_results.college_matches[c][i].c1.is_infinite) { 
-                        decrypted_college_matches[c][i] = encrypted_results.college_matches[c][i].decrypt_to_scalar(private_scalar) as Field; 
-                    } 
-                } 
-            } 
-        } 
-    } 
+            for j in 0..MAX_EDGES {
+                if (j < valid_edge_count as u32) & (j != i) {
+                    let edge_j = graph[j];
+                    
+                    // Check if edge_j continues from where edge_i ends
+                    if (edge_i.to_hospital_id == edge_j.from_hospital_id) &
+                       (edge_i.to_pair_id == edge_j.from_pair_id) {
+                        
+                        for k in 0..MAX_EDGES {
+                            if (k < valid_edge_count as u32) & ((k != i) & (k != j)) {
+                                let edge_k = graph[k];
+                                
+                                // Check if the edges form a 3-way cycle
+                                if (edge_j.to_hospital_id == edge_k.from_hospital_id) &
+                                   (edge_j.to_pair_id == edge_k.from_pair_id) &
+                                   (edge_k.to_hospital_id == edge_i.from_hospital_id) &
+                                   (edge_k.to_pair_id == edge_i.from_pair_id) {
+                                    
+                                    // Found a 3-way cycle
+                                    if cycle_count < MAX_CYCLES as u32 {
+                                        cycles[cycle_count][0] = i as Field;
+                                        cycles[cycle_count][1] = j as Field;
+                                        cycles[cycle_count][2] = k as Field;
+                                        cycle_lengths[cycle_count] = 3;
+                                        cycle_count += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
     
-    // Convert back to original values (remove the +1 adjustment) 
-    for c in 0..N_COLLEGE_QUOTA { 
-        for i in 0..MAX_COLLEGE_CAPACITY { 
-            if decrypted_college_matches[c][i] as u32 > 0 { 
-                decrypted_college_matches[c][i] -= 1; 
-            } 
-        } 
-    } 
-    
-    decrypted_college_matches 
+    ExchangeResult {
+        cycles,
+        cycle_lengths,
+        cycle_count: cycle_count as Field
+    }
 }
 
-/// New main function that accepts already-permuted inputs from the client
-/// The server only sees blinded preferences, never the original ones
-fn main_client_permuted( 
-    // These preferences are already permuted by the client
-    permuted_student_prefs: [[Field; MAX_PREFS]; N_STUDENT_PREFERENCE], 
-    permuted_college_prefs: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA], 
-    college_capacities: [Field; N_COLLEGE_QUOTA], 
-    // These public keys are arranged according to the permutation
-    permuted_student_public_keys: [EmbeddedCurvePoint; N_STUDENT_PREFERENCE], 
-    permuted_college_public_keys: [EmbeddedCurvePoint; N_COLLEGE_QUOTA], 
-    actual_student_list: u32, 
-    actual_uni_list: u32, 
+// Function to select optimal cycles that maximize the number of transplants
+fn select_optimal_cycles(
+    all_cycles: ExchangeResult,
+    graph: [CompatibilityEdge; MAX_EDGES]
+) -> ExchangeResult {
+    // In practice, this would implement a sophisticated optimization algorithm
+    // For simplicity, we'll just prioritize longer cycles
+    
+    let mut selected_cycles = [[NO_MATCH; MAX_CYCLE_LENGTH]; MAX_CYCLES];
+    let mut selected_lengths = [0; MAX_CYCLES];
+    let mut selected_count = 0;
+    
+    let mut used_edges = [false; MAX_EDGES];
+    
+    // Sort cycles by length (descending)
+    // This is a simplified approach - in practice we'd use a proper sorting algorithm
+    
+    // First include 3-way cycles
+    for i in 0..MAX_CYCLES {
+        if i < all_cycles.cycle_count as u32 {
+            if all_cycles.cycle_lengths[i] == 3 {
+                let mut can_use = true;
+                
+                // Check if any edge is already used
+                for j in 0..3 {
+                    let edge_idx = all_cycles.cycles[i][j] as u32;
+                    if used_edges[edge_idx] {
+                        can_use = false;
+                    }
+                }
+                
+                if can_use {
+                    // Add this cycle
+                    selected_cycles[selected_count] = all_cycles.cycles[i];
+                    selected_lengths[selected_count] = 3;
+                    selected_count += 1;
+                    
+                    // Mark edges as used
+                    for j in 0..3 {
+                        let edge_idx = all_cycles.cycles[i][j] as u32;
+                        used_edges[edge_idx] = true;
+                    }
+                }
+            }
+        }
+    }
+    
+    // Then include 2-way cycles
+    for i in 0..MAX_CYCLES {
+        if i < all_cycles.cycle_count as u32 {
+            if all_cycles.cycle_lengths[i] == 2 {
+                let mut can_use = true;
+                
+                // Check if any edge is already used
+                for j in 0..2 {
+                    let edge_idx = all_cycles.cycles[i][j] as u32;
+                    if used_edges[edge_idx] {
+                        can_use = false;
+                    }
+                }
+                
+                if can_use {
+                    // Add this cycle
+                    selected_cycles[selected_count] = all_cycles.cycles[i];
+                    selected_lengths[selected_count] = 2;
+                    selected_count += 1;
+                    
+                    // Mark edges as used
+                    for j in 0..2 {
+                        let edge_idx = all_cycles.cycles[i][j] as u32;
+                        used_edges[edge_idx] = true;
+                    }
+                }
+            }
+        }
+    }
+    
+    ExchangeResult {
+        cycles: selected_cycles,
+        cycle_lengths: selected_lengths,
+        cycle_count: selected_count as Field
+    }
+}
+
+//===== RESULT ENCRYPTION =====
+// Encrypt the exchange results for each hospital
+fn encrypt_exchange_results(
+    exchange_result: ExchangeResult,
+    graph: [CompatibilityEdge; MAX_EDGES],
+    hospital_public_keys: [EmbeddedCurvePoint; MAX_HOSPITALS],
+    nonce_seed: Field
+) -> KidneyExchangeResults {
+    let empty_encrypted_result = ElGamalCiphered::<BITS_DL>::new(
+        EmbeddedCurvePoint { x: 0, y: 0, is_infinite: true },
+        0,
+        EmbeddedCurveScalar::from_field(0)
+    );
+    
+    let mut hospital_results = [EncryptedHospitalResult {
+        hospital_id: 0,
+        encrypted_cycles: [[empty_encrypted_result; MAX_CYCLE_LENGTH]; MAX_CYCLES],
+        cycle_lengths: [empty_encrypted_result; MAX_CYCLES],
+        encrypted_cycle_count: empty_encrypted_result
+    }; MAX_HOSPITALS];
+    
+    // For each hospital, encrypt only the parts of the results they need to know
+    for h in 0..MAX_HOSPITALS {
+        let mut relevant_cycles = [[NO_MATCH; MAX_CYCLE_LENGTH]; MAX_CYCLES];
+        let mut relevant_lengths = [0; MAX_CYCLES];
+        let mut relevant_count = 0;
+        
+        // Find cycles relevant to this hospital
+        for c in 0..MAX_CYCLES {
+            if c < exchange_result.cycle_count as u32 {
+                let mut hospital_involved = false;
+                
+                // Check if this hospital is involved in the cycle
+                for e in 0..MAX_CYCLE_LENGTH {
+                    if e < exchange_result.cycle_lengths[c] as u32 {
+                        let edge_idx = exchange_result.cycles[c][e] as u32;
+                        let edge = graph[edge_idx];
+                        
+                        if (edge.from_hospital_id == h as Field) | (edge.to_hospital_id == h as Field) {
+                            hospital_involved = true;
+                        }
+                    }
+                }
+                
+                if hospital_involved {
+                    relevant_cycles[relevant_count] = exchange_result.cycles[c];
+                    relevant_lengths[relevant_count] = exchange_result.cycle_lengths[c];
+                    relevant_count += 1;
+                }
+            }
+        }
+        
+        // Encrypt the relevant results for this hospital
+        let hospital_pub_key = hospital_public_keys[h];
+        
+        // Encrypt cycle count
+        hospital_results[h].hospital_id = h as Field;
+        hospital_results[h].encrypted_cycle_count = encrypt_elgamal(
+            relevant_count as Field,
+            hospital_pub_key,
+            h as Field,
+            0,
+            nonce_seed
+        );
+        
+        // Encrypt cycle lengths
+        for c in 0..MAX_CYCLES {
+            if c < relevant_count {
+                hospital_results[h].cycle_lengths[c] = encrypt_elgamal(
+                    relevant_lengths[c],
+                    hospital_pub_key,
+                    h as Field,
+                    c as Field + 1,
+                    nonce_seed
+                );
+            }
+        }
+        
+        // Encrypt cycle details
+        for c in 0..MAX_CYCLES {
+            if c < relevant_count {
+                for e in 0..MAX_CYCLE_LENGTH {
+                    if e < relevant_lengths[c] as u32 {
+                        hospital_results[h].encrypted_cycles[c][e] = encrypt_elgamal(
+                            relevant_cycles[c][e],
+                            hospital_pub_key,
+                            h as Field,
+                            (MAX_CYCLES + c) as Field + e as Field,
+                            nonce_seed
+                        );
+                    }
+                }
+            }
+        }
+    }
+    
+    KidneyExchangeResults {
+        hospital_results
+    }
+}
+
+// Decrypt results for a specific hospital
+fn decrypt_hospital_result(
+    encrypted_result: EncryptedHospitalResult,
+    hospital_private_key: Field
+) -> ExchangeResult {
+    let private_scalar = EmbeddedCurveScalar::from_field(hospital_private_key);
+    
+    // Decrypt cycle count
+    let cycle_count = encrypted_result.encrypted_cycle_count.decrypt_to_scalar(private_scalar) as Field;
+    
+    let mut cycles = [[NO_MATCH; MAX_CYCLE_LENGTH]; MAX_CYCLES];
+    let mut cycle_lengths = [0; MAX_CYCLES];
+    
+    // Decrypt cycle lengths
+    for c in 0..MAX_CYCLES {
+        if c < cycle_count as u32 {
+            cycle_lengths[c] = encrypted_result.cycle_lengths[c].decrypt_to_scalar(private_scalar) as Field;
+        }
+    }
+    
+    // Decrypt cycle details
+    for c in 0..MAX_CYCLES {
+        if c < cycle_count as u32 {
+            for e in 0..MAX_CYCLE_LENGTH {
+                if e < cycle_lengths[c] as u32 {
+                    cycles[c][e] = encrypted_result.encrypted_cycles[c][e].decrypt_to_scalar(private_scalar) as Field;
+                }
+            }
+        }
+    }
+    
+    ExchangeResult {
+        cycles,
+        cycle_lengths,
+        cycle_count
+    }
+}
+
+//===== MAIN CIRCUIT FUNCTION =====
+// Main function for the ZK-based kidney exchange system
+fn main(
+    compatibility_proofs: [CompatibilityProof; MAX_EDGES],
+    proof_count: Field,
+    hospital_public_keys: [Field; MAX_HOSPITALS],
+    hospital_public_ec_keys: [EmbeddedCurvePoint; MAX_HOSPITALS],
     nonce_seed: Field,
-    committed_inputs: pub Field // Public input containing commitment hash
-) -> pub MatchResults { 
-    // Verify input commitment - note this commits to the already-permuted preferences
-    let mut input_fields: [Field; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2] = 
-        [0; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2];
+    input_commitment: pub Field
+) -> pub KidneyExchangeResults {
+    // Verify input commitment
+    let mut input_fields: [Field; MAX_EDGES * 5 + 1 + MAX_HOSPITALS] = [0; MAX_EDGES * 5 + 1 + MAX_HOSPITALS];
     
-    // Flatten student preferences
+    // Flatten compatibility proofs
     let mut index = 0;
-    for i in 0..N_STUDENT_PREFERENCE {
-        for j in 0..MAX_PREFS {
-            input_fields[index] = permuted_student_prefs[i][j];
+    for i in 0..MAX_EDGES {
+        if i < proof_count as u32 {
+            input_fields[index] = compatibility_proofs[i].hospital_id;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].donor_commitment;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].recipient_commitment;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].compatibility_result;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].proof_signature;
             index += 1;
         }
     }
     
-    // Flatten college preferences
-    for i in 0..N_COLLEGE_QUOTA {
-        for j in 0..N_STUDENT_PREFERENCE {
-            input_fields[index] = permuted_college_prefs[i][j];
-            index += 1;
-        }
-    }
+    // Add proof count
+    input_fields[index] = proof_count;
+    index += 1;
     
-    // Add college capacities
-    for i in 0..N_COLLEGE_QUOTA {
-        input_fields[index] = college_capacities[i];
+    // Add hospital public keys
+    for i in 0..MAX_HOSPITALS {
+        input_fields[index] = hospital_public_keys[i];
         index += 1;
     }
-    
-    // Add actual counts
-    input_fields[index] = actual_student_list as Field;
-    index += 1;
-    input_fields[index] = actual_uni_list as Field;
     
     // Compute the hash of all inputs
     let computed_commitment = pedersen_hash(input_fields);
-    assert(committed_inputs == computed_commitment); // Ensure the commitment matches the inputs
+    assert(input_commitment == computed_commitment); 
     
-    // Create a placeholder for unmatched/dummy entries 
-    let private_key_f: EmbeddedCurveScalar = EmbeddedCurveScalar::from_field(0); 
-    let public_key_f: EmbeddedCurvePoint = fixed_base_scalar_mul(private_key_f); 
-    let UNMATCHED_ELGAMAL: ElGamalCiphered<BITS_DL> = ElGamalCiphered::<BITS_DL>::new(public_key_f, 0 as Field, EmbeddedCurveScalar::from_field(0)); 
-
-    // 1. Calculate the stable matching using permuted preferences
-    // The server only sees the matching between permuted identities
-    let permuted_stable_matches = stable_matching( 
-        permuted_student_prefs, 
-        permuted_college_prefs, 
-        college_capacities, 
-        actual_student_list, 
-        actual_uni_list 
-    ); 
+    // 1. Build compatibility graph from ZK proofs
+    let graph = build_compatibility_graph(
+        compatibility_proofs,
+        proof_count,
+        hospital_public_keys
+    );
     
-    // Add 1 to avoid zero values
-    let adjusted_matches = permuted_stable_matches.map(|x| x + 1 as Field); 
+    // 2. Find all possible exchange cycles
+    let all_cycles = find_exchange_cycles(graph, proof_count);
     
-    // 3. Initialize result structures 
-    let mut result = MatchResults { 
-        student_matches: [UNMATCHED_ELGAMAL; N_STUDENT_PREFERENCE], 
-        college_matches: [[UNMATCHED_ELGAMAL; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA] 
-    }; 
+    // 3. Select optimal cycles
+    let selected_cycles = select_optimal_cycles(all_cycles, graph);
     
-    // 4. Encrypt matches for students using the permuted public keys
-    for i in 0..N_STUDENT_PREFERENCE { 
-        if i < actual_student_list { 
-            result.student_matches[i] = encrypt_elgamal( 
-                adjusted_matches[i], 
-                permuted_student_public_keys[i], // Permuted public key
-                i as Field, // recipient_id 
-                i as Field, // encryption_index 
-                nonce_seed 
-            ); 
-        } 
-    } 
+    // 4. Encrypt results for each hospital
+    let encrypted_results = encrypt_exchange_results(
+        selected_cycles,
+        graph,
+        hospital_public_ec_keys,
+        nonce_seed
+    );
     
-    // 5. Create and encrypt matches for colleges 
-    let mut college_matches_array = [[UNMATCHED + 1 as Field; MAX_COLLEGE_CAPACITY]; N_COLLEGE_QUOTA]; 
-    
-    // 5a. Populate college matches array from stable matching results 
-    for c in 0..N_COLLEGE_QUOTA { 
-        if c < actual_uni_list { 
-            let mut slot = 0; 
-            for s in 0..N_STUDENT_PREFERENCE { 
-                if adjusted_matches[s] - 1 as Field == c as Field { // Subtract the +1 adjustment 
-                    if slot < college_capacities[c] as u32 { 
-                        college_matches_array[c][slot] = (s + 1) as Field; // Add 1 to avoid zero 
-                        slot += 1; 
-                    } 
-                } 
-            } 
-        } 
-    } 
-    
-    // 5b. Encrypt college matches with proper padding
-    for c in 0..N_COLLEGE_QUOTA { 
-        if c < actual_uni_list { 
-            let college_pub_key = permuted_college_public_keys[c]; 
-            
-            // Count how many real matches this college has
-            let mut real_match_count = 0;
-            for i in 0..MAX_COLLEGE_CAPACITY {
-                if (i < college_capacities[c] as u32) & (college_matches_array[c][i] != UNMATCHED + 1) {
-                    real_match_count += 1;
-                }
-            }
-            
-            // Encrypt all slots up to capacity using a fixed-size loop
-            for i in 0..MAX_COLLEGE_CAPACITY { 
-                if i < college_capacities[c] as u32 {
-                    // Choose the correct value based on whether this is a real match or padding
-                    let value_to_encrypt = if i < real_match_count {
-                        college_matches_array[c][i] // Real match
-                    } else {
-                        UNMATCHED + 1 // Padding value
-                    };
-                    
-                    // Encrypt either the real match or the padding
-                    result.college_matches[c][i] = encrypt_elgamal( 
-                        value_to_encrypt, 
-                        college_pub_key, 
-                        (N_STUDENT_PREFERENCE + c) as Field, 
-                        (N_STUDENT_PREFERENCE + c*MAX_COLLEGE_CAPACITY + i) as Field, 
-                        nonce_seed 
-                    );
-                }
-            }
-        } 
-    }
-    
-    result 
+    encrypted_results
 }
 
-// Client-side utility functions for permutation
-// NOTE: These functions would be implemented on the client side in
-// JavaScript, TypeScript, etc. - not part of the Noir circuit!
-// They're included here for demonstration purposes only.
-
-/// Generate permutation maps for students and colleges
-fn generate_permutation_maps(
-    permutation_seed: Field,
-    actual_student_list: u32,
-    actual_uni_list: u32
-) -> ([u32; N_STUDENT_PREFERENCE], [u32; N_COLLEGE_QUOTA]) {
-    let mut student_id_map = [0; N_STUDENT_PREFERENCE];
-    let mut college_id_map = [0; N_COLLEGE_QUOTA];
-    
-    // Fill with sequential IDs first
-    for i in 0..N_STUDENT_PREFERENCE {
-        student_id_map[i] = i;
-    }
-    
-    for i in 0..N_COLLEGE_QUOTA {
-        college_id_map[i] = i;
-    }
-    
-    // Simple Fisher-Yates shuffle for permutation
-    // For students
-    for i in 0..actual_student_list {
-        let seed_i = hash_to_field([permutation_seed, i as Field]);
-        let j = (seed_i as u32 % (i+1)) as u32;
-        
-        // Swap student_id_map[i] with student_id_map[j]
-        let temp = student_id_map[i];
-        student_id_map[i] = student_id_map[j];
-        student_id_map[j] = temp;
-    }
-    
-    // For colleges
-    for i in 0..actual_uni_list {
-        let seed_i = hash_to_field([permutation_seed, (i + 1000) as Field]);
-        let j = (seed_i as u32 % (i+1)) as u32;
-        
-        // Swap college_id_map[i] with college_id_map[j]
-        let temp = college_id_map[i];
-        college_id_map[i] = college_id_map[j];
-        college_id_map[j] = temp;
-    }
-    
-    (student_id_map, college_id_map)
-}
-
-/// Apply permutation to student and college preferences
-/// This would be done on the client side before submitting to the server
-fn apply_client_permutation(
-    student_prefs: [[Field; MAX_PREFS]; N_STUDENT_PREFERENCE],
-    college_prefs: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA],
-    student_id_map: [u32; N_STUDENT_PREFERENCE],
-    college_id_map: [u32; N_COLLEGE_QUOTA],
-    actual_student_list: u32,
-    actual_uni_list: u32
-) -> ([[Field; MAX_PREFS]; N_STUDENT_PREFERENCE], [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA]) {
-    let mut blinded_student_prefs = [[UNMATCHED; MAX_PREFS]; N_STUDENT_PREFERENCE];
-    let mut blinded_college_prefs = [[UNMATCHED; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA];
-    
-    // Map student preferences
-    for i in 0..actual_student_list {
-        let blinded_i = student_id_map[i];
-        for j in 0..MAX_PREFS {
-            if student_prefs[i][j] != UNMATCHED {
-                // Map college ID in preference
-                let original_college_id = student_prefs[i][j] as u32;
-                if original_college_id < actual_uni_list {
-                    let blinded_college_id = college_id_map[original_college_id];
-                    blinded_student_prefs[blinded_i][j] = blinded_college_id as Field;
-                } else {
-                    blinded_student_prefs[blinded_i][j] = UNMATCHED;
-                }
-            } else {
-                blinded_student_prefs[blinded_i][j] = UNMATCHED;
-            }
-        }
-    }
-    
-    // Map college preferences
-    for i in 0..actual_uni_list {
-        let blinded_i = college_id_map[i];
-        for j in 0..N_STUDENT_PREFERENCE {
-            if college_prefs[i][j] != UNMATCHED {
-                // Map student ID in preference
-                let original_student_id = college_prefs[i][j] as u32;
-                if original_student_id < actual_student_list {
-                    let blinded_student_id = student_id_map[original_student_id];
-                    blinded_college_prefs[blinded_i][j] = blinded_student_id as Field;
-                } else {
-                    blinded_college_prefs[blinded_i][j] = UNMATCHED;
-                }
-            } else {
-                blinded_college_prefs[blinded_i][j] = UNMATCHED;
-            }
-        }
-    }
-    
-    (blinded_student_prefs, blinded_college_prefs)
-}
-
-/// Permute public keys according to ID mappings
-/// This would also be done on the client side
-fn permute_public_keys(
-    student_public_keys: [EmbeddedCurvePoint; N_STUDENT_PREFERENCE],
-    college_public_keys: [EmbeddedCurvePoint; N_COLLEGE_QUOTA],
-    student_id_map: [u32; N_STUDENT_PREFERENCE],
-    college_id_map: [u32; N_COLLEGE_QUOTA],
-    actual_student_list: u32,
-    actual_uni_list: u32
-) -> ([EmbeddedCurvePoint; N_STUDENT_PREFERENCE], [EmbeddedCurvePoint; N_COLLEGE_QUOTA]) {
-    let mut permuted_student_keys = [EmbeddedCurvePoint { x: 0, y: 0, is_infinite: true }; N_STUDENT_PREFERENCE];
-    let mut permuted_college_keys = [EmbeddedCurvePoint { x: 0, y: 0, is_infinite: true }; N_COLLEGE_QUOTA];
-    
-    // Permute student public keys
-    for i in 0..actual_student_list {
-        let permuted_i = student_id_map[i];
-        permuted_student_keys[permuted_i] = student_public_keys[i];
-    }
-    
-    // Permute college public keys
-    for i in 0..actual_uni_list {
-        let permuted_i = college_id_map[i];
-        permuted_college_keys[permuted_i] = college_public_keys[i];
-    }
-    
-    (permuted_student_keys, permuted_college_keys)
-}
-
-/// Client-side function to reverse the permutation after decryption
-/// This would be executed on the client side after receiving encrypted results
-fn client_unmapped_results(
-    decrypted_student_matches: [Field; N_STUDENT_PREFERENCE],
-    student_id_map: [u32; N_STUDENT_PREFERENCE],
-    college_id_map: [u32; N_COLLEGE_QUOTA],
-    actual_student_list: u32
-) -> [Field; N_STUDENT_PREFERENCE] {
-    let mut real_matches = [UNMATCHED; N_STUDENT_PREFERENCE];
-    
-    // Create inverse maps
-    let mut inverse_student_map = [0; N_STUDENT_PREFERENCE];
-    let mut inverse_college_map = [0; N_COLLEGE_QUOTA];
-    
-    for i in 0..N_STUDENT_PREFERENCE {
-        if i < actual_student_list {
-            inverse_student_map[student_id_map[i]] = i;
-        }
-    }
-    
-    for i in 0..N_COLLEGE_QUOTA {
-        inverse_college_map[college_id_map[i]] = i;
-    }
-    
-    // Reverse permutation on results
-    for i in 0..actual_student_list {
-        // Find where this student was permuted to
-        let permuted_i = student_id_map[i];
-        
-        // Get this student's match in permuted space
-        let permuted_match = decrypted_student_matches[permuted_i];
-        
-        if permuted_match != UNMATCHED {
-            // Map the college ID back to the original space
-            let original_college = inverse_college_map[permuted_match as u32];
-            real_matches[i] = original_college as Field;
-        } else {
-            real_matches[i] = UNMATCHED;
-        }
-    }
-    
-    real_matches
-}
-/// Permute private keys according to ID mappings
-fn permute_private_keys(
-    private_keys: [Field; N_STUDENT_PREFERENCE],
-    id_map: [u32; N_STUDENT_PREFERENCE],
-    actual_list: u32
-) -> [Field; N_STUDENT_PREFERENCE] {
-    let mut permuted_keys = [0 as Field; N_STUDENT_PREFERENCE];
-    
-    // Permute private keys
-    for i in 0..actual_list {
-        let permuted_i = id_map[i];
-        permuted_keys[permuted_i] = private_keys[i];
-    }
-    
-    permuted_keys
-}
-
+//===== TEST FUNCTION =====
 #[test]
-fn test_client_permuted_matching() {
-    // Original test data
-    let student_prefs: [[Field; MAX_PREFS]; N_STUDENT_PREFERENCE] = [ 
-        [0, 1, 2, UNMATCHED, UNMATCHED], 
-        [1, 0, 2, UNMATCHED, UNMATCHED], 
-        [1, 2, 0, UNMATCHED, UNMATCHED], 
-        [0, 2, 1, UNMATCHED, UNMATCHED], 
-        [2, 0, 1, UNMATCHED, UNMATCHED], 
-    ]; 
-
-    let college_prefs: [[Field; N_STUDENT_PREFERENCE]; N_COLLEGE_QUOTA] = [ 
-        [1, 3, 0, 2, 4],   
-        [2, 0, 4, 1, 3],   
-        [0, 2, 3, 4, 1],   
-        [UNMATCHED; N_STUDENT_PREFERENCE], 
-        [UNMATCHED; N_STUDENT_PREFERENCE], 
-    ]; 
-
-    // Original cryptographic keys
-    let student_private_keys: [Field; N_STUDENT_PREFERENCE] = [ 
-        0x1 as Field, 
-        0x2 as Field, 
-        0x3 as Field, 
-        0x4 as Field, 
-        0x5 as Field 
-    ]; 
-
-    let student_public_keys: [EmbeddedCurvePoint; N_STUDENT_PREFERENCE] = [ 
-        field_to_curve_point(student_private_keys[0]), 
-        field_to_curve_point(student_private_keys[1]), 
-        field_to_curve_point(student_private_keys[2]), 
-        field_to_curve_point(student_private_keys[3]), 
-        field_to_curve_point(student_private_keys[4]), 
-    ]; 
-
-    let college_private_keys: [Field; N_COLLEGE_QUOTA] = [ 
-        0x6 as Field, 
-        0x7 as Field, 
-        0x8 as Field, 
-        0x9 as Field, 
-        0xA as Field 
+fn test_kidney_exchange() {
+    println("=== Testing Privacy-Preserving Kidney Exchange ===");
+    
+    // Setup test data for hospitals
+    let hospital_private_keys: [Field; MAX_HOSPITALS] = [
+        0x101 as Field, 0x102 as Field, 0x103 as Field, 0x104 as Field, 0x105 as Field,
+        0x106 as Field, 0x107 as Field, 0x108 as Field, 0x109 as Field, 0x10A as Field
     ];
-
-    let college_public_keys: [EmbeddedCurvePoint; N_COLLEGE_QUOTA] = [ 
-        field_to_curve_point(college_private_keys[0]),
-        field_to_curve_point(college_private_keys[1]), 
-        field_to_curve_point(college_private_keys[2]), 
-        field_to_curve_point(college_private_keys[3]), 
-        field_to_curve_point(college_private_keys[4]) 
-    ]; 
-
-    let college_capacities: [Field; N_COLLEGE_QUOTA] = [3, 1, 1, 0, 0];
-    let nonce_seed = 0x12345678 as Field;
-    let permutation_seed = 0x87654321 as Field;
     
-    let actual_student_list = 5; // Number of students in the actual list
-    let actual_uni_list = 3; // Number of colleges in the actual list
+    let hospital_public_keys: [Field; MAX_HOSPITALS] = [
+        0x201 as Field, 0x202 as Field, 0x203 as Field, 0x204 as Field, 0x205 as Field,
+        0x206 as Field, 0x207 as Field, 0x208 as Field, 0x209 as Field, 0x20A as Field
+    ];
     
-    println("=== Testing Client-Side Permuted Matching ===");
-    println("1. STEP: Client generates permutation maps");
+    let hospital_public_ec_keys: [EmbeddedCurvePoint; MAX_HOSPITALS] = [
+        field_to_curve_point(hospital_public_keys[0]),
+        field_to_curve_point(hospital_public_keys[1]),
+        field_to_curve_point(hospital_public_keys[2]),
+        field_to_curve_point(hospital_public_keys[3]),
+        field_to_curve_point(hospital_public_keys[4]),
+        field_to_curve_point(hospital_public_keys[5]),
+        field_to_curve_point(hospital_public_keys[6]),
+        field_to_curve_point(hospital_public_keys[7]),
+        field_to_curve_point(hospital_public_keys[8]),
+        field_to_curve_point(hospital_public_keys[9])
+    ];
     
-    // This step happens on the client side
-    let (student_id_map, college_id_map) = generate_permutation_maps(
-        permutation_seed,
-        actual_student_list,
-        actual_uni_list
-    );
+    // Create sample medical profiles
+    println("1. STEP: Creating sample medical profiles");
     
-    println("Student permutation map:");
-    println(student_id_map);
-    println("College permutation map:");
-    println(college_id_map);
+    let donor_profiles: [MedicalProfile; 5] = [
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_O, 
+            hla_antigens: [1, 2, 3, 4, 5, 6], 
+            pra_score: 10, 
+            age: 35, 
+            additional_factors: 0x1234 as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_A, 
+            hla_antigens: [2, 3, 5, 7, 8, 9], 
+            pra_score: 15, 
+            age: 28, 
+            additional_factors: 0x2345 as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_B, 
+            hla_antigens: [1, 3, 5, 7, 9, 11], 
+            pra_score: 5, 
+            age: 42, 
+            additional_factors: 0x3456 as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_AB, 
+            hla_antigens: [2, 4, 6, 8, 10, 12], 
+            pra_score: 20, 
+            age: 50, 
+            additional_factors: 0x4567 as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_O, 
+            hla_antigens: [1, 3, 6, 9, 12, 15], 
+            pra_score: 25, 
+            age: 33, 
+            additional_factors: 0x5678 as Field 
+        }
+    ];
     
-    println("");
-    println("2. STEP: Client permutes preferences and public keys");
+    let recipient_profiles: [MedicalProfile; 5] = [
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_A, 
+            hla_antigens: [2, 4, 6, 8, 10, 12], 
+            pra_score: 30, 
+            age: 40, 
+            additional_factors: 0x6789 as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_B, 
+            hla_antigens: [1, 3, 5, 7, 9, 11], 
+            pra_score: 45, 
+            age: 25, 
+            additional_factors: 0x789A as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_AB, 
+            hla_antigens: [2, 3, 5, 7, 8, 9], 
+            pra_score: 10, 
+            age: 55, 
+            additional_factors: 0x89AB as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_O, 
+            hla_antigens: [1, 2, 3, 4, 5, 6], 
+            pra_score: 60, 
+            age: 30, 
+            additional_factors: 0x9ABC as Field 
+        },
+        MedicalProfile { 
+            blood_type: BLOOD_TYPE_A, 
+            hla_antigens: [1, 3, 6, 9, 12, 15], 
+            pra_score: 15, 
+            age: 45, 
+            additional_factors: 0xABCD as Field 
+        }
+    ];
     
-    // Apply permutation to preferences (client-side)
-    let (permuted_student_prefs, permuted_college_prefs) = apply_client_permutation(
-        student_prefs,
-        college_prefs,
-        student_id_map,
-        college_id_map,
-        actual_student_list,
-        actual_uni_list
-    );
+    // Create donors and recipients
+    let mut donors: [Donor; 5] = [
+        Donor { id: 0, hospital_id: 0, medical_profile: donor_profiles[0] },
+        Donor { id: 0, hospital_id: 0, medical_profile: donor_profiles[1] },
+        Donor { id: 0, hospital_id: 0, medical_profile: donor_profiles[2] },
+        Donor { id: 0, hospital_id: 0, medical_profile: donor_profiles[3] },
+        Donor { id: 0, hospital_id: 0, medical_profile: donor_profiles[4] }
+    ];
     
-    // Also permute public keys (client-side)
-    let (permuted_student_public_keys, permuted_college_public_keys) = permute_public_keys(
-        student_public_keys,
-        college_public_keys,
-        student_id_map,
-        college_id_map,
-        actual_student_list,
-        actual_uni_list
-    );
+    let mut recipients: [Recipient; 5] = [
+        Recipient { id: 0, hospital_id: 0, medical_profile: recipient_profiles[0], donor_id: 0 },
+        Recipient { id: 0, hospital_id: 0, medical_profile: recipient_profiles[1], donor_id: 0 },
+        Recipient { id: 0, hospital_id: 0, medical_profile: recipient_profiles[2], donor_id: 0 },
+        Recipient { id: 0, hospital_id: 0, medical_profile: recipient_profiles[3], donor_id: 0 },
+        Recipient { id: 0, hospital_id: 0, medical_profile: recipient_profiles[4], donor_id: 0 }
+    ];
     
-    // Also permute private keys (client-side)
-    let permuted_student_private_keys = permute_private_keys(
-        student_private_keys,
-        student_id_map,
-        actual_student_list
-    );
-
-    let permuted_college_private_keys = permute_private_keys(
-        college_private_keys,
-        college_id_map,
-        actual_uni_list
-    );
+    // Assign IDs and hospital IDs
+    for i in 0..5 {
+        donors[i].id = i as Field;
+        donors[i].hospital_id = (i % 3) as Field;
+        
+        recipients[i].id = (i + 100) as Field;
+        recipients[i].hospital_id = (i % 3) as Field;
+        recipients[i].donor_id = i as Field;
+    }
     
-    println("Original first student preferences: ");
-    println(student_prefs[0]);
-    println("Permuted first position preferences: ");
-    println(permuted_student_prefs[0]);
+    println("2. STEP: Checking compatibility and generating ZK proofs");
     
-    println("");
-    println("3. STEP: Create commitment for permuted inputs");
+    // Test compatibility and generate proofs
+    let mut compatibility_proofs: [CompatibilityProof; MAX_EDGES] = [CompatibilityProof {
+        hospital_id: 0,
+        donor_commitment: 0,
+        recipient_commitment: 0,
+        compatibility_result: 0,
+        proof_signature: 0
+    }; MAX_EDGES];
     
-    // Create commitment only on permuted data
-    let mut input_fields: [Field; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2] = 
-        [0; N_STUDENT_PREFERENCE * MAX_PREFS + N_COLLEGE_QUOTA * N_STUDENT_PREFERENCE + N_COLLEGE_QUOTA + 2];
+    let mut proof_count = 0;
     
-    // Flatten permuted student preferences for commitment
+    // Generate proofs for all donor-recipient combinations
+    for i in 0..5 {
+        for j in 0..5 {
+            // Skip own donor-recipient pair (they're already incompatible)
+            if i != j {
+                // Each hospital checks compatibility between their donor and another hospital's recipient
+                let hospital_id = donors[i].hospital_id as u32;
+                
+                let proof = generate_compatibility_proof(
+                    donors[i],
+                    recipients[j],
+                    hospital_private_keys[hospital_id]
+                );
+                
+                compatibility_proofs[proof_count] = proof;
+                proof_count += 1;
+                
+                println(f"Generated proof: donor {i} -> recipient {j}");
+                //println(f"Compatible: {proof.compatibility_result}");
+            }
+        }
+    }
+    
+    println(f"Generated {proof_count} compatibility proofs");
+    
+    // Create input commitment
+    println("3. STEP: Creating commitment for ZK proofs");
+    
+    let mut input_fields: [Field; MAX_EDGES * 5 + 1 + MAX_HOSPITALS] = [0; MAX_EDGES * 5 + 1 + MAX_HOSPITALS];
+    
+    // Flatten compatibility proofs
     let mut index = 0;
-    for i in 0..N_STUDENT_PREFERENCE {
-        for j in 0..MAX_PREFS {
-            input_fields[index] = permuted_student_prefs[i][j];
+    for i in 0..MAX_EDGES {
+        if i < proof_count as u32 {
+            input_fields[index] = compatibility_proofs[i].hospital_id;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].donor_commitment;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].recipient_commitment;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].compatibility_result;
+            index += 1;
+            input_fields[index] = compatibility_proofs[i].proof_signature;
             index += 1;
         }
     }
     
-    // Flatten permuted college preferences for commitment
-    for i in 0..N_COLLEGE_QUOTA {
-        for j in 0..N_STUDENT_PREFERENCE {
-            input_fields[index] = permuted_college_prefs[i][j];
-            index += 1;
-        }
-    }
+    // Add proof count
+    input_fields[index] = proof_count as Field;
+    index += 1;
     
-    // Add college capacities
-    for i in 0..N_COLLEGE_QUOTA {
-        input_fields[index] = college_capacities[i];
+    // Add hospital public keys
+    for i in 0..MAX_HOSPITALS {
+        input_fields[index] = hospital_public_keys[i];
         index += 1;
     }
     
-    // Add actual counts
-    input_fields[index] = actual_student_list as Field;
-    index += 1;
-    input_fields[index] = actual_uni_list as Field;
+    // Compute the hash of all inputs
+    let input_commitment = pedersen_hash(input_fields);
     
-    // Compute the hash of permuted inputs (this is the commitment)
-    let permuted_commitment = pedersen_hash(input_fields);
+    println("Created commitment to all ZK proofs");
     
-    println("Commitment to permuted data generated");
+    // Run the main circuit
+    println("4. STEP: Running main kidney exchange circuit");
     
-    println("");
-    println("4. STEP: Server runs matching on permuted preferences");
-    println("(Server never sees original preferences)");
+    let nonce_seed = 0x12345678 as Field;
     
-    // This is what the server executes
-    let encrypted_results = main_client_permuted( 
-        permuted_student_prefs, 
-        permuted_college_prefs, 
-        college_capacities, 
-        permuted_student_public_keys, 
-        permuted_college_public_keys, 
-        actual_student_list, 
-        actual_uni_list, 
+    let kidney_exchange_results = main(
+        compatibility_proofs,
+        proof_count as Field,
+        hospital_public_keys,
+        hospital_public_ec_keys,
         nonce_seed,
-        permuted_commitment
+        input_commitment
     );
     
-    println("");
-    println("5. STEP: Students and colleges decrypt their results");
+    // Decrypt and verify results
+    println("5. STEP: Hospitals decrypt their results");
     
-    // Decrypt student matches (still in permuted space)
-    let permuted_decrypted_student_matches = decrypt_student_matches(
-        encrypted_results, 
-        permuted_student_private_keys  // Use permuted private keys
-    );
-    
-    println("Permuted student match results:");
-    println(permuted_decrypted_student_matches);
-    
-    // Client-side: Reverse permutation to get real matches
-    let actual_student_matches = client_unmapped_results(
-        permuted_decrypted_student_matches,
-        student_id_map,
-        college_id_map,
-        actual_student_list
-    );
-    
-    println("");
-    println("6. STEP: Client unmaps results to original IDs");
-    println("Actual student matches after reversing permutation:");
-    println(actual_student_matches);
-    
-    // Also decrypt college matches (still permuted)
-    let permuted_college_matches = decrypt_college_matches(
-        encrypted_results, 
-        permuted_college_private_keys,  // Use permuted private keys
-        college_capacities
-    );
-    
-    println("");
-    println("Permuted college matches:");
-    for c in 0..actual_uni_list {
-        println("College (permuted ID)");
-        println(c);
-        println(": ");
-        println(permuted_college_matches[c]);
+    // Each hospital decrypts their results
+    for h in 0..3 { // Just first 3 hospitals for test
+        let hospital_result = decrypt_hospital_result(
+            kidney_exchange_results.hospital_results[h],
+            hospital_private_keys[h]
+        );
+        
+        println("");
+        println(f"Hospital {h} results:");
+        //println(f"Number of cycles: {hospital_result.cycle_count}");
+        
+        for c in 0..hospital_result.cycle_count as u32 {
+         //   println(f"Cycle {c} (length {hospital_result.cycle_lengths[c]}):");
+            
+            for e in 0..hospital_result.cycle_lengths[c] as u32 {
+              //  println(f"Edge ID: {hospital_result.cycles[c][e]}");
+            }
+        }
     }
     
-    // Each college would need to do similar unmasking
-    
     println("");
-    println("=== Client-side permutation test completed successfully ===");
-    println("Server never saw the original preferences or the actual matching results!");
+    println("=== Privacy-Preserving Kidney Exchange Test Completed ===");
 }

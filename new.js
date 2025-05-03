@@ -476,3 +476,57 @@ document.addEventListener("DOMContentLoaded", () => {
   
   document.body.insertBefore(genKeyBtn, document.getElementById("submit").nextSibling);
 });
+
+// Demo: Account creation and permutation logic for privacy-preserving stable matching
+
+// Function to generate a random permutation map
+function generatePermutationMap(size) {
+    const map = Array.from({ length: size }, (_, i) => i);
+    for (let i = size - 1; i > 0; i--) {
+        const j = Math.floor(Math.random() * (i + 1));
+        [map[i], map[j]] = [map[j], map[i]]; // Swap elements
+    }
+    return map;
+}
+
+// Function to permute preferences based on a permutation map
+function permutePreferences(preferences, permutationMap) {
+    return preferences.map(pref => pref.map(id => (id !== 999 ? permutationMap[id] : 999)));
+}
+
+// Example: Create a new account and permute preferences
+function demoAccountCreation() {
+    const studentPreferences = [
+        [0, 1, 2, 999, 999],
+        [1, 0, 2, 999, 999],
+        [1, 2, 0, 999, 999],
+        [0, 2, 1, 999, 999],
+        [2, 0, 1, 999, 999],
+    ];
+
+    const collegePreferences = [
+        [1, 3, 0, 2, 4],
+        [2, 0, 4, 1, 3],
+        [0, 2, 3, 4, 1],
+    ];
+
+    console.log("Original Student Preferences:", studentPreferences);
+    console.log("Original College Preferences:", collegePreferences);
+
+    // Generate permutation maps for students and colleges
+    const studentPermutationMap = generatePermutationMap(studentPreferences.length);
+    const collegePermutationMap = generatePermutationMap(collegePreferences.length);
+
+    console.log("Student Permutation Map:", studentPermutationMap);
+    console.log("College Permutation Map:", collegePermutationMap);
+
+    // Permute preferences
+    const permutedStudentPreferences = permutePreferences(studentPreferences, collegePermutationMap);
+    const permutedCollegePreferences = permutePreferences(collegePreferences, studentPermutationMap);
+
+    console.log("Permuted Student Preferences:", permutedStudentPreferences);
+    console.log("Permuted College Preferences:", permutedCollegePreferences);
+}
+
+// Run the demo
+demoAccountCreation();
